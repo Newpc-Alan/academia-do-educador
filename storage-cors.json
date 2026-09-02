@@ -1,0 +1,13 @@
+[
+  {
+    "//": "Permite que a Academia baixe os materiais direto, em vez de só abrir em outra aba. Aplicar com: gsutil cors set storage-cors.json gs://portal-educador-academia-a1b2c.firebasestorage.app",
+    "origin": [
+      "https://academia.portaldoeducador.com.br",
+      "https://newpc-alan.github.io",
+      "http://localhost:5500"
+    ],
+    "method": ["GET", "HEAD"],
+    "responseHeader": ["Content-Type", "Content-Disposition"],
+    "maxAgeSeconds": 3600
+  }
+]

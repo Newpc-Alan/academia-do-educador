@@ -1,0 +1,41 @@
+{
+  "indexes": [
+    {
+      "//": "Catálogo do professor: filtra por status e ordena por ordem. Firestore exige índice composto quando o filtro e a ordenação são de campos diferentes. Sem isto, a Academia abre com erro no primeiro acesso.",
+      "collectionGroup": "cursos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "ordem",  "order": "ASCENDING" }
+      ]
+    },
+    {
+      "//": "Mesma coisa para as trilhas.",
+      "collectionGroup": "trilhas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "ordem",  "order": "ASCENDING" }
+      ]
+    },
+    {
+      "//": "Usado pela Function ao verificar se o professor já tem certificado daquele curso.",
+      "collectionGroup": "certificados",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "uid",     "order": "ASCENDING" },
+        { "fieldPath": "cursoId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "//": "Lista de certificados do professor, do mais recente para o mais antigo.",
+      "collectionGroup": "certificados",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "uid",           "order": "ASCENDING" },
+        { "fieldPath": "emitidoEmISO",  "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

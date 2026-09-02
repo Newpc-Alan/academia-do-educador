@@ -1,0 +1,141 @@
+rules_version = '2';
+
+// =============================================================================
+// ACADEMIA DO EDUCADOR — Regras do Firestore
+// Projeto: portal-educador-academia
+//
+// TRÊS PRINCÍPIOS QUE GOVERNAM ESTE ARQUIVO
+//
+// 1. O professor só enxerga e escreve o que é dele.
+// 2. Conteúdo publicado é público; rascunho só a equipe vê.
+// 3. Gabarito de quiz e certificado NUNCA passam pelo navegador do usuário.
+//    Quem lê gabarito e quem cria certificado é o Admin SDK, dentro das
+//    Cloud Functions. É isso que impede alguém de forjar um certificado
+//    abrindo o console do navegador.
+//
+// Publicar:  firebase deploy --only firestore:rules
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ------------------------------------------------------------------
+    // FUNÇÕES AUXILIARES
+    // Os papéis vêm de custom claims no token (definidos pela Function
+    // `definirPapel`). Claim é mais barato que consultar coleção: não gasta
+    // leitura e não pode ser adulterado pelo cliente.
+    // ------------------------------------------------------------------
+    function autenticado()  { return request.auth != null; }
+    function dono(uid)      { return autenticado() && request.auth.uid == uid; }
+    function papel()        { return autenticado() ? request.auth.token.papel : ""; }
+    function ehAdmin()      { return papel() == "admin"; }
+    function ehEditor()     { return papel() == "admin" || papel() == "editor"; }
+
+    function cursoPublicado(cursoId) {
+      return get(/databases/$(database)/documents/cursos/$(cursoId)).data.status == "publicado";
+    }
+
+    // ==================================================================
+    // PERMISSÕES — espelho legível dos papéis
+    // A verdade está no custom claim; esta coleção existe para o painel
+    // conseguir listar a equipe. Só admin escreve.
+    // ==================================================================
+    match /equipe/{uid} {
+      allow read:  if ehEditor();
+      allow write: if ehAdmin();
+    }
+
+    // ==================================================================
+    // CATÁLOGO
+    // ==================================================================
+    match /cursos/{cursoId} {
+      // Público vê apenas o que está publicado. A equipe vê tudo.
+      allow read:   if resource.data.status == "publicado" || ehEditor();
+      allow create: if ehEditor();
+      allow update: if ehEditor()
+                    // só admin pode colocar no ar ou tirar do ar
+                    && (request.resource.data.status == resource.data.status || ehAdmin());
+      allow delete: if ehAdmin();
+
+      match /modulos/{moduloId} {
+        allow read:  if cursoPublicado(cursoId) || ehEditor();
+        allow write: if ehEditor();
+      }
+
+      match /aulas/{aulaId} {
+        allow read:  if cursoPublicado(cursoId) || ehEditor();
+        allow write: if ehEditor();
+      }
+
+      // Enunciado e alternativas — o aluno precisa ler para responder.
+      // Repare que aqui NÃO existe o campo com a resposta certa.
+      match /questoes/{questaoId} {
+        allow read:  if cursoPublicado(cursoId) || ehEditor();
+        allow write: if ehEditor();
+      }
+
+      // GABARITO — resposta correta e explicação.
+      // Leitura negada para TODO MUNDO no cliente, inclusive para editor.
+      // Quem lê é a Cloud Function `corrigirQuiz`, que usa o Admin SDK e
+      // por isso ignora estas regras. O editor escreve, mas não relê:
+      // o painel mantém a resposta em memória enquanto edita.
+      match /gabarito/{questaoId} {
+        allow read:   if false;
+        allow write:  if ehEditor();
+      }
+    }
+
+    match /trilhas/{trilhaId} {
+      allow read:   if resource.data.status == "publicado" || ehEditor();
+      allow create: if ehEditor();
+      allow update: if ehEditor();
+      allow delete: if ehAdmin();
+    }
+
+    // ==================================================================
+    // PROFESSOR
+    // ==================================================================
+    match /users/{uid} {
+      allow read, write: if dono(uid);
+
+      // Progresso: aulas concluídas, gravadas por identificador real da aula
+      match /progresso/{cursoId} {
+        allow read, write: if dono(uid);
+      }
+
+      // Tentativas de quiz: o aluno LÊ (para ver a própria nota), mas não
+      // escreve — quem grava é a Function após corrigir. Se o cliente pudesse
+      // escrever aqui, bastaria gravar aprovado:true e pular a avaliação.
+      match /tentativas/{cursoId} {
+        allow read:  if dono(uid);
+        allow write: if false;
+      }
+    }
+
+    // ==================================================================
+    // CERTIFICADOS
+    // Leitura pública e sem login — é o que faz validar.html funcionar para
+    // o RH da prefeitura. Escrita totalmente bloqueada no cliente: emissão e
+    // revogação acontecem apenas nas Cloud Functions.
+    // ==================================================================
+    match /certificados/{codigo} {
+      allow read:  if true;
+      allow write: if false;
+    }
+
+    // ==================================================================
+    // RELATÓRIOS POR REDE DE ENSINO (fase 3)
+    // ==================================================================
+    match /municipios/{municipioId} {
+      allow read:  if ehAdmin() || (autenticado() && request.auth.token.municipio == municipioId);
+      allow write: if false;
+    }
+
+    // ==================================================================
+    // PADRÃO — o que não foi declarado acima fica fechado
+    // ==================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

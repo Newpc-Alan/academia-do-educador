@@ -1,0 +1,13 @@
+# NUNCA versionar: dá acesso total ao projeto Firebase
+scripts/chave-servico.json
+*serviceAccount*.json
+
+node_modules/
+functions/node_modules/
+scripts/node_modules/
+.firebase/
+*.log
+.DS_Store
+_p-*.png
+_a-*.png
+_preview-*.png
