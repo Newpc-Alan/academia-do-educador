@@ -218,16 +218,17 @@ Aguarde o certificado SSL ser emitido (de 10 minutos a algumas horas) e então m
 
 ## ETAPA 8 — Ajustes finais  ·  10 min
 
-### Download dos materiais
+### Download dos materiais — nada a fazer
 
-Por padrão, clicar num PDF abre em outra aba em vez de baixar. Para resolver, com o `gsutil`
-instalado (vem com o Google Cloud SDK):
+Cada tipo de arquivo já se comporta corretamente:
 
-```bash
-gsutil cors set storage-cors.json gs://portal-educador-academia-a1b2c.firebasestorage.app
-```
+- **PDF** abre no visualizador do navegador, onde o professor lê e salva com um clique
+- **DOCX, PPTX, XLSX** baixam automaticamente, porque o navegador não sabe exibi-los
 
-Não é impeditivo — o professor consegue salvar pelo visualizador. Deixe para depois se travar.
+> Forçar o download de PDF por código não é possível: o atributo `download` de um link é ignorado
+> quando o arquivo está em outro domínio, e o Firebase Storage é outro domínio. Isso é regra do
+> navegador, não configuração de servidor. A alternativa seria marcar todo material como anexo no
+> upload — mas aí o PDF deixaria de abrir para leitura, o que piora a experiência.
 
 ### Indexação no Google
 

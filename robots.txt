@@ -1,4 +1,7 @@
 User-agent: *
 Allow: /
 
+# Painel administrativo não deve ser indexado
+Disallow: /admin.html
+
 Sitemap: https://academia.portaldoeducador.com.br/sitemap.xml

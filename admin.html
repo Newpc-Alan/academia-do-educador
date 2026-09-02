@@ -144,6 +144,8 @@ tr.clicavel:hover td{background:#f8fbfe}
 }
 .solta:hover,.solta.sobre{border-color:var(--verde);background:var(--verde-100);color:var(--verde-700)}
 
+.capa-previa{aspect-ratio:16/9;border-radius:var(--r-sm);overflow:hidden;border:1px solid var(--linha);background:linear-gradient(135deg,var(--azul),var(--verde))}
+.capa-previa img{width:100%;height:100%;object-fit:cover;display:block}
 .previa-video{position:relative;padding-top:56.25%;border-radius:var(--r-sm);overflow:hidden;background:#000;margin-top:.5rem}
 .previa-video iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
 
@@ -282,6 +284,29 @@ const slug = s => String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-
 const tamanho = b => !b ? "" : b < 1024*1024 ? `${Math.round(b/1024)} KB` : `${(b/1024/1024).toFixed(1)} MB`;
 const extensao = n => (n.split(".").pop()||"").toLowerCase();
 
+/* Redimensiona a imagem ANTES de subir. A equipe pedagógica vai arrastar foto
+   de celular de 4 MB sem pensar — e seis dessas na página inicial derrubam a
+   Academia no Chromebook da escola. Aqui tudo sai padronizado em 1200x675
+   WebP, uns 60 KB, sem ninguém precisar saber redimensionar imagem. */
+async function prepararCapa(file, L = 1200, A = 675){
+  const bitmap = await createImageBitmap(file);
+  const c = document.createElement("canvas");
+  c.width = L; c.height = A;
+  const ctx = c.getContext("2d");
+  ctx.imageSmoothingQuality = "high";
+
+  // Recorte "cover": preenche o quadro inteiro e corta o excedente pelo centro
+  const escala = Math.max(L / bitmap.width, A / bitmap.height);
+  const w = bitmap.width * escala, h = bitmap.height * escala;
+  ctx.drawImage(bitmap, (L - w) / 2, (A - h) / 2, w, h);
+  bitmap.close?.();
+
+  const blob = await new Promise(r => c.toBlob(r, "image/webp", 0.82))
+            || await new Promise(r => c.toBlob(r, "image/jpeg", 0.85));
+  const ext = blob.type.includes("webp") ? "webp" : "jpg";
+  return new File([blob], `capa.${ext}`, { type: blob.type });
+}
+
 // Aceita URL completa, link curto, embed ou o próprio ID de 11 caracteres.
 function idDoYoutube(entrada){
   const t = String(entrada||"").trim();
@@ -361,6 +386,10 @@ const ApiDemo = {
   async enviarArquivo(cid, file){
     await new Promise(r=>setTimeout(r,450));
     return { url:URL.createObjectURL(file), path:`materiais/${cid}/${file.name}`, bytes:file.size };
+  },
+  async enviarCapa(cid, file){
+    await new Promise(r=>setTimeout(r,350));
+    return { url:URL.createObjectURL(file), path:`capas/${cid}.webp` };
   },
   async excluirArquivo(){ },
   async listarTrilhas(){ return Object.entries(DEMO.trilhas).map(([id,t])=>({ id, ...clonar(t) })); },
@@ -481,6 +510,15 @@ const ApiFirebase = {
     if (!path) return;
     const { ref, deleteObject } = fb.st;
     try { await deleteObject(ref(fb.bucket, path)); } catch(e){ console.warn("Arquivo já removido:", path); }
+  },
+
+  async enviarCapa(cid, file){
+    const { ref, uploadBytes, getDownloadURL } = fb.st;
+    // Nome fixo por curso: trocar a capa sobrescreve a anterior em vez de acumular
+    const caminho = `capas/${cid}.${file.name.split(".").pop()}`;
+    const r = ref(fb.bucket, caminho);
+    await uploadBytes(r, file, { contentType:file.type, cacheControl:"public,max-age=604800" });
+    return { url: await getDownloadURL(r), path: caminho };
   },
 
   async listarTrilhas(){
@@ -615,6 +653,28 @@ T.curso_dados = async id => {
         <input class="campo" id="fOrdem" type="number" min="1" value="${c.ordem||1}">
       </div>
     </div>
+
+    <div class="linha"><div>
+      <label class="rot">Capa do curso</label>
+      <div id="areaCapa">
+        ${c.capaURL
+          ? `<div class="capa-previa"><img src="${esc(c.capaURL)}" alt="Capa do curso"></div>
+             <div class="l-auto" style="margin-top:8px">
+               <button class="btn b-neutro b-pequeno" id="trocarCapa">Trocar imagem</button>
+               <button class="btn b-perigo b-pequeno" id="removerCapa">Remover</button>
+             </div>`
+          : `<div class="solta" id="soltaCapa" role="button" tabindex="0">
+               <b>Clique para escolher</b> ou arraste a imagem aqui
+               <div style="font-size:.79rem;margin-top:.3rem">Proporção 16:9 · recomendado 1200×675 px · JPG ou PNG</div>
+             </div>`}
+      </div>
+      <input type="file" id="capaInput" class="oculto" accept="image/*">
+      <p class="ajuda">
+        A imagem é redimensionada automaticamente para 1200×675 e comprimida antes de subir —
+        pode arrastar foto de celular sem se preocupar com tamanho.
+      </p>
+      <div id="msgCapa" style="margin-top:8px"></div>
+    </div></div>
 
     <div class="linha"><div>
       <label class="rot">Trilhas em que este curso aparece</label>
@@ -1087,6 +1147,48 @@ function ligarListaCursos(){
 }
 
 function ligarDados(id){
+  // ---------- capa do curso ----------
+  const entradaCapa = $("#capaInput");
+  const abrirSeletor = () => entradaCapa.click();
+
+  $("#soltaCapa")?.addEventListener("click", abrirSeletor);
+  $("#soltaCapa")?.addEventListener("keydown", e=>{ if (e.key==="Enter"||e.key===" ") { e.preventDefault(); abrirSeletor(); } });
+  $("#trocarCapa")?.addEventListener("click", abrirSeletor);
+
+  const solta = $("#soltaCapa");
+  if (solta){
+    ["dragenter","dragover"].forEach(ev=>solta.addEventListener(ev, e=>{ e.preventDefault(); solta.classList.add("sobre"); }));
+    ["dragleave","drop"].forEach(ev=>solta.addEventListener(ev, e=>{ e.preventDefault(); solta.classList.remove("sobre"); }));
+    solta.addEventListener("drop", e=>{ const f = e.dataTransfer.files[0]; if (f) enviarCapa(f); });
+  }
+
+  entradaCapa?.addEventListener("change", ()=>{ if (entradaCapa.files[0]) enviarCapa(entradaCapa.files[0]); });
+
+  async function enviarCapa(file){
+    if (!file.type.startsWith("image/")) return avisar("Escolha um arquivo de imagem.","erro","#msgCapa");
+    avisar("Preparando a imagem…","info","#msgCapa");
+    try {
+      const otimizada = await prepararCapa(file);
+      const r = await Api.enviarCapa(id, otimizada);
+      await Api.salvarCurso(id, { capaURL:r.url, capaPath:r.path });
+      cursoAberto = null;
+      await renderizar();
+      avisar(`Capa enviada — ${tamanho(otimizada.size)} depois da compressão.`,"ok","#msgCapa");
+    } catch(err){
+      avisar(err.message || "Falha ao enviar a capa.","erro","#msgCapa");
+    }
+  }
+
+  $("#removerCapa")?.addEventListener("click", async ()=>{
+    if (!confirm("Remover a capa deste curso?")) return;
+    const c = await carregarCurso(id);
+    await Api.excluirArquivo(c.capaPath);
+    await Api.salvarCurso(id, { capaURL:"", capaPath:"" });
+    cursoAberto = null;
+    await renderizar();
+  });
+
+  // ---------- demais campos ----------
   $("#salvarDados")?.addEventListener("click", async e=>{
     const b = e.currentTarget; b.disabled = true; b.innerHTML = '<span class="girando"></span> Salvando…';
     await Api.salvarCurso(id, {
