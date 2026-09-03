@@ -487,6 +487,49 @@ footer.rodape a:hover{text-decoration:underline}
 .toque.ver{opacity:1;transform:translateX(-50%) translateY(0)}
 
 .indice a.proxima{background:#fbfdfc;border-left-color:#cfe0d4}
+.indice .item-travado{
+  display:flex;align-items:flex-start;gap:9px;padding:.55rem 1.05rem;
+  color:#9aa9b8;font-size:.89rem;border-left:3px solid transparent;cursor:not-allowed;
+}
+.indice .travado{width:14px;flex-shrink:0;font-size:.8rem}
+
+/* Aula bloqueada na ementa do curso */
+.aula.travada{cursor:not-allowed;background:#fafbfc}
+.aula.travada .aula-txt strong{color:#8c9bab}
+
+/* Ementa recolhida: a estrutura do curso vive na lateral, aqui fica só para
+   quem quer conferir o programa antes de começar. */
+.ementa{border:1px solid var(--linha);border-radius:var(--r);background:var(--papel);overflow:hidden}
+.ementa > summary{
+  cursor:pointer;padding:.95rem 1.2rem;font-weight:600;font-size:.95rem;color:var(--azul);
+  list-style:none;display:flex;align-items:center;gap:9px;
+}
+.ementa > summary::-webkit-details-marker{display:none}
+.ementa > summary::before{content:"▸";color:var(--verde);font-size:1.1rem;line-height:1}
+.ementa[open] > summary::before{content:"▾"}
+.ementa > summary:hover{background:#f7fafc}
+.ementa .modulo{border-top:1px solid var(--linha)}
+
+/* Caminho até o certificado */
+.fluxo{list-style:none;margin:0;padding:0;position:relative}
+.fluxo li{display:flex;gap:11px;padding:0 0 .95rem;position:relative}
+.fluxo li:last-child{padding-bottom:0}
+.fluxo li::before{
+  content:"";position:absolute;left:9px;top:20px;bottom:0;width:2px;background:var(--linha);
+}
+.fluxo li:last-child::before{display:none}
+.fluxo .ponto{
+  width:20px;height:20px;flex-shrink:0;border-radius:50%;display:grid;place-items:center;
+  font-size:.62rem;font-weight:800;background:#e9eff5;color:#93a3b3;position:relative;z-index:1;
+}
+.fluxo li.ok .ponto{background:var(--verde);color:#fff}
+.fluxo li.agora .ponto{background:var(--azul);color:#fff}
+.fluxo .txt{display:flex;flex-direction:column;line-height:1.35;min-width:0}
+.fluxo .txt b{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--tinta-suave)}
+.fluxo .txt span:nth-of-type(1){font-size:.9rem;font-weight:600;color:var(--tinta)}
+.fluxo .txt span:nth-of-type(2){font-size:.8rem;color:var(--tinta-suave)}
+.fluxo li.travado .txt span:nth-of-type(1){color:#9aa9b8;font-weight:500}
+.fluxo li.ok .txt span:nth-of-type(1){color:var(--verde)}
 
 /* ==========================================================================
    AVALIAÇÃO
@@ -968,6 +1011,20 @@ const gravarLocal = o => { try { localStorage.setItem(CHAVE, JSON.stringify(o));
 
 let DEMO = null;
 
+// Provas sorteadas do modo demonstração. Em produção elas ficam no servidor,
+// porque é a ordem embaralhada que traduz a resposta marcada de volta para o
+// gabarito: guardar isso no navegador seria entregar a prova.
+const PROVAS_DEMO = {};
+
+function baralhar(lista){
+  const a = [...lista];
+  for (let i = a.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 const DadosDemo = {
   modo:"demo",
   async iniciar(){
@@ -988,25 +1045,58 @@ const DadosDemo = {
     gravarLocal(d); E.progresso[cursoId] = dados;
   },
   async salvarPerfil(p){ const d = lerLocal(); d.perfil = { ...(d.perfil||{}), ...p }; gravarLocal(d); E.perfil = d.perfil; },
-  async corrigirQuiz(cursoId, respostas){
+
+  // Espelha o comportamento da Function: sorteia, embaralha e guarda a ordem.
+  async sortearProva(cursoId){
     const c = DEMO.cursos[cursoId];
-    const ids = Object.keys(c.questoes);
+    const banco = Object.entries(c.questoes||{}).map(([id,q])=>({ id, ...q }));
+    if (!banco.length) throw new Error("Este curso não tem questões cadastradas.");
+    const quantas = Math.min(Number(c.quizPorProva ?? 10) || 10, banco.length);
+    const escolhidas = baralhar(banco).slice(0, quantas);
+    const itens = [], questoes = [];
+    for (const q of escolhidas){
+      const alts = q.alternativas || [];
+      const ordem = baralhar(alts.map((_,i)=>i));
+      itens.push({ questaoId:q.id, ordem });
+      questoes.push({ id:q.id, enunciado:q.enunciado, alternativas: ordem.map(i=>alts[i]) });
+    }
+    const provaId = "demo-" + Date.now();
+    PROVAS_DEMO[provaId] = { cursoId, itens };
+    const t = E.tentativas[cursoId];
+    return { provaId, questoes, notaCorte: c.quizNotaCorte||70,
+             tentativasUsadas: t?.tentativas||0, tentativasMax: c.quizTentativasMax||3,
+             expiraEmISO: new Date(Date.now()+90*60000).toISOString(), reaberta:false };
+  },
+
+  async corrigirQuiz(provaId, cursoId, respostas){
+    const prova = PROVAS_DEMO[provaId];
+    if (!prova) throw new Error("Prova não encontrada. Abra a avaliação de novo.");
+    const c = DEMO.cursos[prova.cursoId];
     let acertos = 0;
-    const detalhes = ids.map(qid=>{
-      const g = c.gabarito[qid];
-      const acertou = Number(respostas[qid]) === Number(g.correta);
+    const detalhes = prova.itens.map(item=>{
+      const g = c.gabarito[item.questaoId] || {};
+      const marcada = respostas[item.questaoId];
+      const original = (marcada===undefined||marcada===null||marcada==="") ? null : item.ordem[Number(marcada)];
+      const acertou = original !== null && Number(original) === Number(g.correta);
       if (acertou) acertos++;
-      return { questaoId:qid, acertou, correta:g.correta, explicacao:g.explicacao };
+      return { questaoId:item.questaoId, acertou,
+               corretaExibida:item.ordem.indexOf(Number(g.correta)), explicacao:g.explicacao||"" };
     });
-    const nota = Math.round(acertos/ids.length*100);
+    const total = prova.itens.length;
+    const nota = total ? Math.round(acertos/total*100) : 0;
     const aprovado = nota >= (c.quizNotaCorte||70);
-    const ant = E.tentativas[cursoId] || { tentativas:0, melhorNota:0 };
-    const t = { cursoId, tentativas:ant.tentativas+1, ultimaNota:nota,
+    const ant = E.tentativas[prova.cursoId] || { tentativas:0, melhorNota:0 };
+    const t = { cursoId:prova.cursoId, tentativas:ant.tentativas+1, ultimaNota:nota,
                 melhorNota:Math.max(ant.melhorNota, nota), aprovado: aprovado || ant.aprovado };
-    E.tentativas[cursoId] = t;
+    E.tentativas[prova.cursoId] = t;
     const d = lerLocal(); d.tentativas = E.tentativas; gravarLocal(d);
-    return { nota, acertos, total:ids.length, aprovado, notaCorte:c.quizNotaCorte||70,
-             tentativasUsadas:t.tentativas, tentativasMax:c.quizTentativasMax||3, detalhes };
+    const max = c.quizTentativasMax||3;
+    return { nota, acertos, total, aprovado, notaCorte:c.quizNotaCorte||70,
+             tentativasUsadas:t.tentativas, tentativasMax:max,
+             tentativasRestantes: Math.max(0, max - t.tentativas),
+             // Mesma regra do servidor: reprovado não recebe o gabarito.
+             detalhes: aprovado ? detalhes
+                                : detalhes.map(x=>({ questaoId:x.questaoId, acertou:x.acertou })) };
   },
   async emitirCertificado(cursoId){
     const c = DEMO.cursos[cursoId];
@@ -1111,15 +1201,20 @@ const DadosFirebase = {
     const { doc, getDoc, collection, getDocs } = fb.fs;
     const c = await getDoc(doc(fb.db,"cursos",id));
     if (!c.exists()) return null;
-    const [mod, aul, que] = await Promise.all([
+    // As questões NÃO são lidas aqui de propósito. As regras do Firestore negam
+    // essa leitura ao professor: quem monta a prova é a Function `sortearProva`.
+    // Enquanto o navegador podia ler o banco, bastava abrir o console para ver
+    // todos os enunciados antes de começar a avaliação.
+    const [mod, aul] = await Promise.all([
       getDocs(collection(fb.db,"cursos",id,"modulos")),
-      getDocs(collection(fb.db,"cursos",id,"aulas")),
-      getDocs(collection(fb.db,"cursos",id,"questoes"))
+      getDocs(collection(fb.db,"cursos",id,"aulas"))
     ]);
     const obj = s => { const o = {}; s.forEach(d=>o[d.id]=d.data()); return o; };
-    E.detalhe[id] = { id, ...c.data(), modulos:obj(mod), aulas:obj(aul), questoes:obj(que) };
+    E.detalhe[id] = { id, ...c.data(), modulos:obj(mod), aulas:obj(aul), questoes:{} };
     return E.detalhe[id];
   },
+
+  sortearProva(cursoId){ return this.chamar("sortearProva", { cursoId }); },
 
   async carregarUsuario(uid){
     const { doc, getDoc, setDoc, collection, getDocs, query, where, serverTimestamp } = fb.fs;
@@ -1147,12 +1242,18 @@ const DadosFirebase = {
     E.certificados.sort((a,b)=>(b.emitidoEmISO||"").localeCompare(a.emitidoEmISO||""));
   },
 
-  async salvarProgresso(cursoId, dados){
+  /* `marcouAula` diz se esta gravação está concluindo uma aula. Só nesse caso o
+     carimbo `ultimaConclusaoEm` é renovado, e é esse carimbo que a regra do
+     Firestore usa para exigir o intervalo mínimo entre uma conclusão e a
+     seguinte. Gravações de vídeo assistido passam com o carimbo intacto. */
+  async salvarProgresso(cursoId, dados, marcouAula = false){
     E.progresso[cursoId] = dados;
     if (!E.usuario) return;
     const { doc, setDoc, serverTimestamp } = fb.fs;
-    await setDoc(doc(fb.db,"users",E.usuario.uid,"progresso",cursoId),
-                 { ...dados, atualizadoEm:serverTimestamp() }, { merge:true });
+    const payload = { ...dados, atualizadoEm:serverTimestamp() };
+    if (marcouAula) payload.ultimaConclusaoEm = serverTimestamp();
+    else            delete payload.ultimaConclusaoEm;
+    await setDoc(doc(fb.db,"users",E.usuario.uid,"progresso",cursoId), payload, { merge:true });
   },
 
   async salvarPerfil(p){
@@ -1162,8 +1263,8 @@ const DadosFirebase = {
     await setDoc(doc(fb.db,"users",E.usuario.uid), p, { merge:true });
   },
 
-  async corrigirQuiz(cursoId, respostas){
-    const r = await this.chamar("corrigirQuiz", { cursoId, respostas });
+  async corrigirQuiz(provaId, cursoId, respostas){
+    const r = await this.chamar("corrigirQuiz", { provaId, respostas });
     E.tentativas[cursoId] = {
       tentativas:r.tentativasUsadas, ultimaNota:r.nota,
       melhorNota:Math.max(E.tentativas[cursoId]?.melhorNota||0, r.nota), aprovado:r.aprovado
@@ -1283,6 +1384,51 @@ function progressoGeral(){
 }
 
 const aprovadoNoQuiz = cursoId => Boolean(E.tentativas[cursoId]?.aprovado);
+
+/* ---------------------------------------------------------------------------
+   TRAVA SEQUENCIAL POR MÓDULO
+
+   O módulo seguinte só abre quando todas as aulas do anterior estiverem
+   concluídas. Dentro do módulo o professor navega à vontade: pode voltar,
+   reler, rever o vídeo. O que a trava impede é atravessar o curso inteiro no
+   botão de avançar sem passar pelo conteúdo.
+
+   A escolha por módulo, e não aula por aula, é deliberada. Trava aula por aula
+   parece mais segura, mas na prática só irrita quem precisa reconsultar algo
+   que já viu, e não impede nada que esta não impeça.
+--------------------------------------------------------------------------- */
+function modulosLiberados(c, feitas){
+  const liberados = new Set();
+  const aulas = aulasOrdenadas(c);
+  let travou = false;
+  for (const m of modulosOrdenados(c)){
+    if (!travou) liberados.add(m.id);
+    const doModulo = aulas.filter(a => a.moduloId === m.id);
+    if (doModulo.length && !doModulo.every(a => feitas.includes(a.id))) travou = true;
+  }
+  return liberados;
+}
+
+const aulaLiberada = (c, aulaId, feitas) => {
+  const a = (c.aulas || {})[aulaId];
+  return Boolean(a) && modulosLiberados(c, feitas).has(a.moduloId);
+};
+
+/* Tempo mínimo de permanência antes de a aula poder ser dada como concluída.
+   Aula com vídeo já tem a trava do próprio vídeo, então aqui o piso é só para
+   impedir o clique reflexo. Aula de texto e material, que não tem outra
+   verificação possível, exige mais. */
+function tempoMinimoAula(a){
+  // Atalho só do modo demonstração, para conseguir percorrer o curso inteiro em
+  // uma revisão de conteúdo sem esperar o relógio de cada aula. Não existe em
+  // produção, e mesmo aqui não emite certificado de verdade.
+  if (MODO_DEMO && location.search.includes("rapido")) return 1;
+  if (a.videos?.length) return 25;
+  const proporcional = Number(a.duracaoMin || 3) * 60 * 0.4;
+  return Math.max(60, Math.min(300, Math.round(proporcional)));
+}
+
+const emSegundos = s => `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
 
 function podeEmitir(c){
   if (!progressoDe(c.id).concluido) return false;
@@ -1468,25 +1614,63 @@ T.curso = async id => {
   const p = progressoDe(id, aulas.length);
   const cert = E.certificados.find(x=>x.cursoId===id);
   const tent = E.tentativas[id];
-  const proxima = aulas.find(a=>!p.feitas.includes(a.id)) || aulas[0];
+  const liberados = modulosLiberados(c, p.feitas);
+  // Próxima aula = primeira pendente dentro de um módulo já liberado.
+  const proxima = aulas.find(a=>!p.feitas.includes(a.id) && liberados.has(a.moduloId))
+               || aulas.find(a=>liberados.has(a.moduloId))
+               || aulas[0];
 
   const listaConteudo = modulosOrdenados(c).map(m=>{
     const doModulo = aulas.filter(a=>a.moduloId===m.id);
     return `
     <div class="modulo">
-      <h3>${esc(m.titulo)} <small>${doModulo.length} aulas</small></h3>
+      <h3>${esc(m.titulo)} <small>${doModulo.length} aulas${liberados.has(m.id)?'':' · bloqueado'}</small></h3>
       ${doModulo.map((a,i)=>{
         const feita = p.feitas.includes(a.id);
-        return `<a class="aula ${feita?'feita':''}" href="#/aula/${id}/${a.id}" style="text-decoration:none;color:inherit">
-          <span style="width:20px;flex-shrink:0;color:${feita?'var(--verde)':'#c3d3e5'};font-weight:800;margin-top:.1rem">${feita?'✓':'○'}</span>
+        const aberto = liberados.has(m.id);
+        const marca = feita ? '✓' : (aberto ? '○' : '🔒');
+        const cor   = feita ? 'var(--verde)' : (aberto ? '#c3d3e5' : '#adbccd');
+        const linha = `
+          <span style="width:20px;flex-shrink:0;color:${cor};font-weight:800;margin-top:.1rem">${marca}</span>
           <span class="aula-txt">
             <strong>${esc(a.titulo)}</strong>
             <span>${a.duracaoMin?`${a.duracaoMin} min`:'Aula '+(i+1)}${a.videos?.length?` · ${a.videos.length} vídeo${a.videos.length>1?'s':''}`:''}${a.materiais?.length?` · ${a.materiais.length} material${a.materiais.length>1?'is':''}`:''}</span>
-          </span>
-        </a>`;
+          </span>`;
+        return aberto
+          ? `<a class="aula ${feita?'feita':''}" href="#/aula/${id}/${a.id}" style="text-decoration:none;color:inherit">${linha}</a>`
+          : `<div class="aula travada" aria-disabled="true">${linha}</div>`;
       }).join("")}
     </div>`;
   }).join("") || '<div class="vazio"><p>Este curso ainda não tem aulas publicadas.</p></div>';
+
+  /* Fluxo do curso na lateral: é ele que passa a ser a referência de estrutura,
+     no lugar da lista longa que ficava repetindo o mesmo conteúdo no meio da
+     tela. Mostra em que etapa o professor está e o que falta para o certificado. */
+  const etapas = modulosOrdenados(c).map((m, k) => {
+    const doModulo = aulas.filter(a => a.moduloId === m.id);
+    const feitas = doModulo.filter(a => p.feitas.includes(a.id)).length;
+    const completo = doModulo.length > 0 && feitas === doModulo.length;
+    const aberto = liberados.has(m.id);
+    return { rotulo: `Módulo ${k+1}`, titulo: m.titulo,
+             detalhe: `${feitas} de ${doModulo.length} aulas`,
+             estado: completo ? "ok" : (aberto ? "agora" : "travado") };
+  });
+  if (c.quizAtivo) etapas.push({
+    rotulo: "Avaliação", titulo: "Avaliação final",
+    detalhe: `nota mínima ${c.quizNotaCorte||70}%`,
+    estado: aprovadoNoQuiz(id) ? "ok" : (p.concluido ? "agora" : "travado")
+  });
+  etapas.push({
+    rotulo: "Certificado", titulo: "Emissão do certificado",
+    detalhe: `${c.horas} horas`,
+    estado: cert ? "ok" : ((p.concluido && (!c.quizAtivo || aprovadoNoQuiz(id))) ? "agora" : "travado")
+  });
+
+  const fluxo = `<ol class="fluxo">${etapas.map(e=>`
+    <li class="${e.estado}">
+      <span class="ponto">${e.estado==="ok"?"✓":(e.estado==="travado"?"🔒":"●")}</span>
+      <span class="txt"><b>${esc(e.rotulo)}</b><span>${esc(e.titulo)}</span><span>${esc(e.detalhe)}</span></span>
+    </li>`).join("")}</ol>`;
 
   let blocoAcao;
   if (cert){
@@ -1514,8 +1698,17 @@ T.curso = async id => {
         ${c.capaURL ? `<div class="capa-curso"><img src="${esc(c.capaURL)}" alt="" decoding="async"></div>` : ''}
         ${c.descricao ? `<div class="texto-aula" style="margin-bottom:1.6rem">${esc(c.descricao)}</div>` : ''}
 
-        <h2 style="margin-top:1.6rem;font-size:1.3rem">Conteúdo do curso</h2>
-        ${listaConteudo}
+        <div class="aviso aviso-info" style="margin-bottom:1.4rem"><span>
+          <b>Como este curso funciona</b>
+          As aulas são liberadas por módulo: o próximo abre quando você concluir o
+          atual.${c.quizAtivo?` No fim há uma avaliação com questões sorteadas, e a nota mínima é ${c.quizNotaCorte||70}%.`:''}
+          O certificado sai depois de tudo cumprido.
+        </span></div>
+
+        <details class="ementa">
+          <summary>Ver a ementa completa (${modulosOrdenados(c).length} módulos, ${aulas.length} aulas)</summary>
+          ${listaConteudo}
+        </details>
       </div>
 
       <aside>
@@ -1526,10 +1719,14 @@ T.curso = async id => {
 
           ${blocoAcao}
 
+          <div style="margin-top:1.3rem;padding-top:1.1rem;border-top:1px solid var(--linha)">
+            <b style="color:var(--azul);display:block;margin-bottom:.6rem;font-size:.9rem">Caminho até o certificado</b>
+            ${fluxo}
+          </div>
+
           ${c.quizAtivo ? `
-            <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--linha);font-size:.87rem;color:var(--tinta-suave)">
-              <b style="color:var(--azul);display:block;margin-bottom:.2rem">Avaliação final</b>
-              Nota mínima ${c.quizNotaCorte||70}% · ${c.quizTentativasMax?`${c.quizTentativasMax} tentativas`:'tentativas ilimitadas'}
+            <div style="margin-top:.4rem;padding-top:1rem;border-top:1px solid var(--linha);font-size:.87rem;color:var(--tinta-suave)">
+              ${c.quizTentativasMax?`${c.quizTentativasMax} tentativas`:'Tentativas ilimitadas'} · questões sorteadas a cada tentativa
               ${tent ? `<br>Sua melhor nota: <b style="color:${tent.aprovado?'var(--verde)':'var(--alerta)'}">${tent.melhorNota}%</b>` : ''}
             </div>` : ''}
 
@@ -1557,22 +1754,52 @@ T.aula = async (cursoId, aulaId) => {
   const p = progressoDe(cursoId, aulas.length);
   const feita = p.feitas.includes(a.id);
   const anterior = aulas[i-1], proxima = aulas[i+1];
+  const liberados = modulosLiberados(c, p.feitas);
+
+  // Aula de módulo ainda travado não abre nem por URL digitada na barra.
+  if (!liberados.has(a.moduloId)){
+    // Módulo em que o professor realmente está: o primeiro ainda incompleto.
+    const mod = modulosOrdenados(c).find(m => {
+      const doMod = aulas.filter(x => x.moduloId === m.id);
+      return doMod.length && !doMod.every(x => p.feitas.includes(x.id));
+    });
+    return `<section class="bloco"><div class="container" style="max-width:680px">
+      <p class="migalha"><a href="#/curso/${cursoId}">${esc(c.titulo)}</a> › Aula bloqueada</p>
+      <div class="painel" style="text-align:center">
+        <p style="font-size:2.6rem;margin:0">🔒</p>
+        <h1 style="font-size:1.5rem;margin:.5rem 0">Esta aula ainda não foi liberada</h1>
+        <p style="color:var(--tinta-suave)">
+          As aulas abrem por módulo. Termine o módulo em que você está e o próximo
+          libera sozinho.${mod?` Você está em <b>${esc(mod.titulo)}</b>.`:''}
+        </p>
+        <a class="btn btn-primario" href="#/curso/${cursoId}">Voltar ao curso</a>
+      </div>
+    </div></section>`;
+  }
 
   const videos = a.videos || [];
   const materiais = a.materiais || [];
+  const esperaMin = feita ? 0 : tempoMinimoAula(a);
 
   const indice = modulosOrdenados(c).map(m=>{
     const doModulo = aulas.filter(x=>x.moduloId===m.id);
     if (!doModulo.length) return "";
-    return `<div class="grupo">${esc(m.titulo)}</div>` + doModulo.map(x=>{
+    const aberto = liberados.has(m.id);
+    return `<div class="grupo">${esc(m.titulo)}${aberto?'':' 🔒'}</div>` + doModulo.map(x=>{
       const ok = p.feitas.includes(x.id);
       const seguinte = proxima && x.id === proxima.id;
-      return `<a href="#/aula/${cursoId}/${x.id}" data-aula="${x.id}"
-        class="${seguinte?'proxima':''}" ${x.id===a.id?'aria-current="page"':''}>
-        <span class="${ok?'ok':'pendente'}">${ok?'✓':'○'}</span>
-        <span>${esc(x.titulo)}</span></a>`;
+      const miolo = `<span class="${ok?'ok':(aberto?'pendente':'travado')}">${ok?'✓':(aberto?'○':'🔒')}</span>
+        <span>${esc(x.titulo)}</span>`;
+      return aberto
+        ? `<a href="#/aula/${cursoId}/${x.id}" data-aula="${x.id}"
+             class="${seguinte?'proxima':''}" ${x.id===a.id?'aria-current="page"':''}>${miolo}</a>`
+        : `<span class="item-travado" data-aula="${x.id}">${miolo}</span>`;
     }).join("");
-  }).join("");
+  }).join("") + (c.quizAtivo ? `
+    <div class="grupo">Conclusão</div>
+    ${p.concluido
+      ? `<a href="#/avaliacao/${cursoId}"><span class="${aprovadoNoQuiz(cursoId)?'ok':'pendente'}">${aprovadoNoQuiz(cursoId)?'✓':'○'}</span><span>Avaliação final</span></a>`
+      : `<span class="item-travado"><span class="travado">🔒</span><span>Avaliação final</span></span>`}` : "");
 
   // Para onde o professor segue ao concluir esta aula.
   const destino = proxima ? `#/aula/${cursoId}/${proxima.id}`
@@ -1637,10 +1864,13 @@ T.aula = async (cursoId, aulaId) => {
             : `<div class="txt">
                  <strong>Terminou esta aula?</strong>
                  <span>${videos.length
-                   ? 'Ela é marcada sozinha quando você assiste ao vídeo até o fim. Se preferir, marque agora.'
-                   : 'Marcar as aulas é o que libera a avaliação final e o certificado.'}</span>
+                   ? 'Ela é marcada sozinha quando você assiste ao vídeo até o fim.'
+                   : 'Concluir as aulas é o que libera o próximo módulo, a avaliação e o certificado.'}</span>
                </div>
-               <button class="btn btn-primario" id="concluirAula" type="button">${rotuloConcluir}</button>`}
+               <button class="btn btn-primario" id="concluirAula" type="button"
+                       data-rotulo="${esc(rotuloConcluir)}" data-espera="${esperaMin}" disabled>
+                 ${rotuloConcluir}
+               </button>`}
         </div>
 
         <div class="nav-aula">
@@ -1669,8 +1899,6 @@ T.avaliacao = async cursoId => {
   if (!c) return T.erro404();
   if (!c.quizAtivo) return T.erro404("Este curso não possui avaliação final.");
 
-  const questoes = Object.entries(c.questoes||{})
-    .map(([id,q])=>({ id, ...q })).sort((a,b)=>(a.ordem||0)-(b.ordem||0));
   const p = progressoDe(cursoId, Object.keys(c.aulas||{}).length);
   const t = E.tentativas[cursoId];
   const max = c.quizTentativasMax || 0;
@@ -1701,33 +1929,70 @@ T.avaliacao = async cursoId => {
     </div></section>`;
   }
 
-  return `<section class="bloco"><div class="container" style="max-width:800px">
+  const cabecalho = `
     <p class="migalha"><a href="#/curso/${cursoId}">${esc(c.titulo)}</a> › Avaliação</p>
-    <h1>Avaliação final</h1>
+    <h1>Avaliação final</h1>`;
+
+  if (esgotou){
+    return `<section class="bloco"><div class="container" style="max-width:800px">
+      ${cabecalho}
+      <div class="aviso aviso-erro"><span><b>Tentativas esgotadas</b>
+      Você usou as ${max} tentativas permitidas. Escreva para suporte@portaldoeducador.com.br
+      para pedir a liberação de uma nova.</span></div>
+      <a class="btn btn-secundario" href="#/curso/${cursoId}">Voltar ao curso</a>
+    </div></section>`;
+  }
+
+  // A prova é montada no servidor. O navegador nunca vê o banco completo nem a
+  // resposta certa: recebe apenas as questões sorteadas para esta tentativa,
+  // com as alternativas já embaralhadas.
+  let prova;
+  try {
+    prova = await Dados.sortearProva(cursoId);
+  } catch(e){
+    return `<section class="bloco"><div class="container" style="max-width:800px">
+      ${cabecalho}
+      <div class="aviso aviso-erro"><span><b>Não foi possível abrir a avaliação</b>
+      ${esc(e.message || "Tente novamente em alguns instantes.")}</span></div>
+      <a class="btn btn-secundario" href="#/curso/${cursoId}">Voltar ao curso</a>
+    </div></section>`;
+  }
+
+  const questoes = prova.questoes || [];
+  const LETRAS = "ABCDEFGH";
+
+  return `<section class="bloco"><div class="container" style="max-width:800px">
+    ${cabecalho}
     <p style="color:var(--tinta-suave)">
-      ${questoes.length} questões · nota mínima ${c.quizNotaCorte||70}% ·
-      ${max ? `${max} tentativas${t?.tentativas?` (você já usou ${t.tentativas})`:''}` : 'tentativas ilimitadas'}
+      ${questoes.length} questões sorteadas · nota mínima ${prova.notaCorte}% ·
+      ${max ? `${max} tentativas${prova.tentativasUsadas?` (você já usou ${prova.tentativasUsadas})`:''}` : 'tentativas ilimitadas'}
     </p>
 
-    ${t && !t.aprovado ? `<div class="aviso aviso-atencao"><span><b>Tentativa anterior: ${t.ultimaNota}%</b>Você precisa de ${c.quizNotaCorte||70}% para ser aprovado. Reveja as aulas antes de tentar de novo.</span></div>`:''}
-    ${esgotou ? `<div class="aviso aviso-erro"><span><b>Tentativas esgotadas</b>Escreva para suporte@portaldoeducador.com.br para solicitar uma nova tentativa.</span></div>`:''}
+    <div class="aviso aviso-info"><span><b>Como esta prova foi montada</b>
+      As questões foram sorteadas do banco do curso e as alternativas vêm em ordem
+      embaralhada, diferente da de qualquer outra pessoa. Se você não atingir a nota,
+      a próxima tentativa traz outro sorteio.${prova.reaberta?' Esta é a mesma prova que você já tinha aberto.':''}
+    </span></div>
 
-    <form id="formQuiz" ${esgotou?'style="opacity:.5;pointer-events:none"':''}>
+    ${t && !t.aprovado ? `<div class="aviso aviso-atencao"><span><b>Tentativa anterior: ${t.ultimaNota}%</b>
+      Você precisa de ${prova.notaCorte}% para ser aprovado.</span></div>`:''}
+
+    <form id="formQuiz" data-prova="${esc(prova.provaId)}">
       ${questoes.map((q,i)=>`
-        <div class="questao" data-q="${q.id}">
+        <div class="questao" data-q="${esc(q.id)}">
           <div class="numero">Questão ${i+1} de ${questoes.length}</div>
           <p class="enunciado">${esc(q.enunciado)}</p>
           ${(q.alternativas||[]).map((alt,k)=>`
             <label class="alt" data-alt="${k}">
-              <input type="radio" name="q-${q.id}" value="${k}">
-              <span class="letra">${"ABCD"[k]}</span>
+              <input type="radio" name="q-${esc(q.id)}" value="${k}">
+              <span class="letra">${LETRAS[k]||k+1}</span>
               <span>${esc(alt)}</span>
             </label>`).join("")}
           <div class="explicacao oculto"></div>
         </div>`).join("")}
 
       <div id="msgQuiz"></div>
-      <button class="btn btn-primario" type="submit" ${esgotou?'disabled':''}>Enviar respostas</button>
+      <button class="btn btn-primario" type="submit">Enviar respostas</button>
       <a class="btn btn-secundario" href="#/curso/${cursoId}">Voltar ao curso</a>
     </form>
 
@@ -2066,7 +2331,17 @@ function toque(texto){
 
 /* Marca ou desmarca uma aula. Usada tanto pelo botão de conclusão quanto pela
    marcação automática do vídeo, para as duas não saírem de sincronia. */
+/* As regras do Firestore exigem 45 segundos entre uma conclusão e a seguinte.
+   Guardamos o horário da última aqui para esperar em silêncio quando faltar
+   pouco, em vez de deixar o professor levar um erro de permissão na cara. */
+let ultimaConclusaoLocal = 0;
+
 async function definirConclusao(cursoId, aulaId, concluir){
+  // No modo demonstração não existe regra de servidor para respeitar.
+  if (concluir && ultimaConclusaoLocal && !MODO_DEMO){
+    const falta = 47000 - (Date.now() - ultimaConclusaoLocal);
+    if (falta > 0) await new Promise(r => setTimeout(r, falta));
+  }
   const c = await Dados.lerCurso(cursoId);
   const aulas = aulasOrdenadas(c);
   const p = progressoDe(cursoId, aulas.length);
@@ -2087,9 +2362,10 @@ async function definirConclusao(cursoId, aulaId, concluir){
     // Idem para a conclusão — se o professor desmarcar e marcar de novo,
     // a data original permanece.
     concluidoEmISO: completo ? (anterior.concluidoEmISO || new Date().toISOString()) : null
-  });
+  }, concluir);
 
   if (concluir){
+    ultimaConclusaoLocal = Date.now();
     if (!anterior.iniciadoEmISO) evento("curso_iniciado", { curso: cursoId });
     evento("aula_concluida", { curso: cursoId, aula: aulaId });
     if (completo && !anterior.concluido) evento("curso_concluido", { curso: cursoId });
@@ -2164,11 +2440,38 @@ function ligarAula(cursoId, aulaId){
   }
   ligarDesfazer();
 
-  $("#concluirAula")?.addEventListener("click", async e=>{
+  /* Tempo mínimo de permanência. O botão nasce desligado e vai contando: é o
+     que impede varrer o curso inteiro no clique. Quem tem vídeo nem chega a
+     usar o botão, porque a aula fecha sozinha antes. */
+  const btnConcluir = $("#concluirAula");
+  if (btnConcluir){
+    let restam = Number(btnConcluir.dataset.espera) || 0;
+    const rotulo = btnConcluir.dataset.rotulo || "Concluir e continuar →";
+    let contador = null;
+    const tique = () => {
+      if (restam <= 0){
+        clearInterval(contador);
+        btnConcluir.disabled = false;
+        btnConcluir.textContent = rotulo;
+        return;
+      }
+      btnConcluir.textContent = `Disponível em ${emSegundos(restam)}`;
+      restam--;
+    };
+    contador = setInterval(tique, 1000);
+    tique();
+  }
+
+  btnConcluir?.addEventListener("click", async e=>{
     const b = e.currentTarget;
     b.disabled = true; b.textContent = "Salvando…";
-    await definirConclusao(cursoId, aulaId, true);
-    location.hash = destino;
+    try {
+      await definirConclusao(cursoId, aulaId, true);
+      location.hash = destino;
+    } catch(err){
+      b.disabled = false; b.textContent = b.dataset.rotulo;
+      toque("Não foi possível salvar agora. Tente de novo em alguns segundos.");
+    }
   });
 
   /* ---- Marcação automática pelo vídeo assistido ---- */
@@ -2242,12 +2545,14 @@ function ligarAvaliacao(cursoId){
 
   $("#formQuiz")?.addEventListener("submit", async ev=>{
     ev.preventDefault();
-    const c = await Dados.lerCurso(cursoId);
-    const questoes = Object.keys(c.questoes||{});
+    const provaId = ev.target.dataset.prova;
     const respostas = {};
     let faltando = 0;
-    questoes.forEach(qid=>{
-      const m = document.querySelector(`input[name="q-${qid}"]:checked`);
+    // As questões da prova são as que estão na tela: o navegador não tem mais
+    // acesso ao banco do curso para consultar outra lista.
+    $$("#formQuiz .questao").forEach(bloco=>{
+      const qid = bloco.dataset.q;
+      const m = bloco.querySelector("input:checked");
       if (m) respostas[qid] = Number(m.value); else faltando++;
     });
     if (faltando) return alerta(`Faltam ${faltando} questão(ões) sem resposta.`, "atencao", "#msgQuiz");
@@ -2256,24 +2561,32 @@ function ligarAvaliacao(cursoId){
     btn.disabled = true; btn.innerHTML = '<span class="carregando"></span> Corrigindo…';
 
     try {
-      const r = await Dados.corrigirQuiz(cursoId, respostas);
+      const r = await Dados.corrigirQuiz(provaId, cursoId, respostas);
       evento("avaliacao_respondida", { curso: cursoId, nota: r.nota, aprovado: r.aprovado });
 
-      // Marca visualmente cada alternativa e revela a explicação
+      /* Devolutiva. Aprovado recebe a alternativa correta e a explicação, porque
+         aí vira aprendizado. Reprovado recebe apenas onde errou: entregar o
+         gabarito na reprovação seria entregar a próxima tentativa pronta. */
       r.detalhes.forEach(d=>{
         const bloco = document.querySelector(`[data-q="${d.questaoId}"]`);
         if (!bloco) return;
         const escolhida = Number(respostas[d.questaoId]);
+        const revela = d.corretaExibida !== undefined && d.corretaExibida !== null;
+
         bloco.querySelectorAll(".alt").forEach(alt=>{
           const k = Number(alt.dataset.alt);
-          if (k === d.correta) alt.classList.add("certa");
-          else if (k === escolhida) alt.classList.add("errada");
+          if (revela && k === d.corretaExibida) alt.classList.add("certa");
+          else if (!d.acertou && k === escolhida) alt.classList.add("errada");
           alt.querySelector("input").disabled = true;
         });
-        if (d.explicacao){
-          const ex = bloco.querySelector(".explicacao");
+
+        const ex = bloco.querySelector(".explicacao");
+        if (revela && d.explicacao){
           ex.classList.remove("oculto");
-          ex.innerHTML = `<b>${d.acertou?"Correto":"Resposta correta: alternativa "+"ABCD"[d.correta]}</b> ${esc(d.explicacao)}`;
+          ex.innerHTML = `<b>${d.acertou?"Correto":"Resposta correta: alternativa "+("ABCDEFGH"[d.corretaExibida]||"")}</b> ${esc(d.explicacao)}`;
+        } else if (!d.acertou){
+          ex.classList.remove("oculto");
+          ex.innerHTML = `<b>Você errou esta questão.</b> A resposta certa não é revelada agora: reveja a aula correspondente antes da próxima tentativa.`;
         }
       });
 
@@ -2287,7 +2600,10 @@ function ligarAvaliacao(cursoId){
           </p>
           ${r.aprovado
             ? '<button class="btn btn-primario" data-emitir="'+cursoId+'">Emitir meu certificado</button>'
-            : `<p style="font-size:.9rem">Reveja as explicações acima antes de tentar de novo.</p>
+            : `<p style="font-size:.9rem;max-width:52ch;margin:0 auto 1rem">
+                 Reveja as aulas das questões que você errou. A próxima tentativa
+                 traz outro sorteio de questões, não estas mesmas.
+               </p>
                ${(!r.tentativasMax || r.tentativasUsadas < r.tentativasMax)
                   ? '<button class="btn btn-primario" id="tentarDeNovo">Tentar novamente</button> '
                   : ''}

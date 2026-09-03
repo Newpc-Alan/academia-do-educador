@@ -88,6 +88,7 @@ label.rot{display:block;font-size:.83rem;font-weight:600;margin:0 0 .3rem;color:
 .linha{display:grid;gap:14px;margin-bottom:14px}
 .l2{grid-template-columns:1fr 1fr}
 .l3{grid-template-columns:1fr 1fr 1fr}
+.l4{grid-template-columns:1fr 1fr 1fr 1fr}
 .l-auto{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 
 .selo{font-size:.68rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:.2rem .55rem;border-radius:99px;border:1px solid;white-space:nowrap}
@@ -171,7 +172,7 @@ tr.clicavel:hover td{background:#f8fbfe}
   nav.menu{display:flex;flex-wrap:wrap;gap:4px}
   nav.menu .grupo{width:100%}
   main.conteudo{padding:20px}
-  .l2,.l3{grid-template-columns:1fr}
+  .l2,.l3,.l4{grid-template-columns:1fr}
 }
 
 /* ==========================================================================
@@ -835,13 +836,18 @@ T.curso_avaliacao = async id => {
 
   <div class="cartao">
     <h2>Regras da avaliação</h2>
-    <div class="linha l3">
+    <div class="linha l4">
       <div>
         <label class="rot" for="qAtivo">Avaliação final</label>
         <select class="campo" id="qAtivo">
           <option value="1" ${c.quizAtivo?"selected":""}>Obrigatória para o certificado</option>
           <option value="0" ${!c.quizAtivo?"selected":""}>Desativada</option>
         </select>
+      </div>
+      <div>
+        <label class="rot" for="qPorProva">Questões por prova</label>
+        <input class="campo" id="qPorProva" type="number" min="1" max="50" value="${c.quizPorProva??10}">
+        <p class="ajuda">Sorteadas do banco a cada tentativa.</p>
       </div>
       <div>
         <label class="rot" for="qNota">Nota mínima (%)</label>
@@ -854,8 +860,12 @@ T.curso_avaliacao = async id => {
       </div>
     </div>
     <div class="aviso a-info">
-      <span><b>Onde a correção acontece</b>O gabarito fica em uma coleção que o navegador não consegue ler. A correção roda no servidor, então nem o aluno nem alguém inspecionando a página conseguem ver as respostas antes de responder.</span>
+      <span><b>Como a prova chega ao professor</b>O navegador não lê o banco de questões
+      nem o gabarito: quem monta a prova é o servidor, que sorteia as questões e embaralha
+      as alternativas de cada uma. Duas pessoas nunca recebem a mesma prova, e uma nova
+      tentativa nunca repete o sorteio anterior.</span>
     </div>
+    <div id="avisoBanco"></div>
     <button class="btn b-primario" id="salvarRegras" ${podeEditar()?"":"disabled"}>Salvar regras</button>
   </div>
 
@@ -864,6 +874,10 @@ T.curso_avaliacao = async id => {
       <h2 style="margin:0">Banco de questões</h2>
       <button class="btn b-neutro" id="novaQuestao" ${podeEditar()?"":"disabled"}>+ Nova questão</button>
     </div>
+    <p class="ajuda" style="margin:.4rem 0 0">
+      O sorteio só protege de verdade quando o banco é bem maior que a prova.
+      Referência: pelo menos <b>três vezes</b> o número de questões por prova.
+    </p>
     <div id="listaQuestoes" style="margin-top:14px"></div>
   </div>`;
 };
@@ -1375,7 +1389,38 @@ function ligarAvaliacao(id){
     pintar();
   })();
 
+  /* Sorteio com banco pequeno é sorteio de mentira: se o curso pede 10 questões
+     e o banco tem 11, todo mundo faz praticamente a mesma prova. Este aviso
+     existe para a equipe não publicar achando que está protegida. */
+  function avisarBanco(){
+    const alvo = $("#avisoBanco"); if (!alvo) return;
+    const ativo = $("#qAtivo")?.value === "1";
+    const porProva = Math.max(1, Number($("#qPorProva")?.value) || 10);
+    const banco = questoes.length;
+    if (!ativo) { alvo.innerHTML = ""; return; }
+
+    if (banco === 0){
+      alvo.innerHTML = `<div class="aviso a-erro"><span><b>Banco vazio</b>
+        A avaliação está marcada como obrigatória, mas não há nenhuma questão cadastrada.
+        Nesta situação o professor não consegue concluir o curso nem emitir certificado.</span></div>`;
+    } else if (banco < porProva){
+      alvo.innerHTML = `<div class="aviso a-erro"><span><b>Banco menor que a prova</b>
+        O curso pede ${porProva} questões por prova e o banco tem ${banco}. Todas as
+        questões vão cair em todas as provas, e o sorteio deixa de proteger.</span></div>`;
+    } else if (banco < porProva * 3){
+      alvo.innerHTML = `<div class="aviso a-atencao"><span><b>Banco apertado</b>
+        ${banco} questões para provas de ${porProva}. Recomendado: ${porProva * 3} ou mais,
+        para que duas pessoas dificilmente recebam a mesma prova.</span></div>`;
+    } else {
+      alvo.innerHTML = `<div class="aviso a-ok"><span><b>Banco em tamanho adequado</b>
+        ${banco} questões para provas de ${porProva}.</span></div>`;
+    }
+  }
+  $("#qPorProva")?.addEventListener("input", avisarBanco);
+  $("#qAtivo")?.addEventListener("change", avisarBanco);
+
   function pintar(){
+    avisarBanco();
     const alvo = $("#listaQuestoes"); if (!alvo) return;
     alvo.innerHTML = questoes.length ? questoes.map(([qid,q],i)=>{
       const g = gabarito[qid] || {};
@@ -1437,6 +1482,7 @@ function ligarAvaliacao(id){
   $("#salvarRegras")?.addEventListener("click", async ()=>{
     await Api.salvarCurso(id, {
       quizAtivo:        $("#qAtivo").value === "1",
+      quizPorProva:     Math.max(1, Number($("#qPorProva").value) || 10),
       quizNotaCorte:    Number($("#qNota").value) || 70,
       quizTentativasMax:Number($("#qTent").value) || 0
     });
