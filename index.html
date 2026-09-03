@@ -403,7 +403,10 @@ footer.rodape a:hover{text-decoration:underline}
 /* ==========================================================================
    AULA — player, materiais e navegação
    ========================================================================== */
-.aula-moldura{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,340px);gap:24px;align-items:start}
+/* align-items:stretch (padrão) é proposital: sem isso a coluna da direita tem a
+   altura do próprio conteúdo e o position:sticky do índice não tem por onde
+   correr, então ele some assim que o professor rola a página. */
+.aula-moldura{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,340px);gap:24px}
 @media (max-width:980px){ .aula-moldura{grid-template-columns:1fr} }
 
 .player{position:relative;padding-top:56.25%;background:#000;border-radius:var(--r);overflow:hidden;box-shadow:var(--sombra)}
@@ -445,7 +448,45 @@ footer.rodape a:hover{text-decoration:underline}
 .indice a .ok{color:var(--verde);font-weight:800;width:14px;flex-shrink:0}
 .indice a .pendente{color:#c3d3e5;width:14px;flex-shrink:0}
 
-.nav-aula{display:flex;justify-content:space-between;gap:12px;margin-top:20px;flex-wrap:wrap}
+.nav-aula{display:flex;justify-content:space-between;gap:12px;margin-top:20px;flex-wrap:wrap;align-items:center}
+
+/* Faixa de progresso no topo da aula */
+.faixa-progresso{margin:0 0 1.2rem}
+.faixa-progresso .rot{
+  display:flex;justify-content:space-between;align-items:baseline;
+  font-size:.82rem;font-weight:600;color:var(--tinta-suave);margin-bottom:.35rem;
+}
+.faixa-progresso .rot b{color:var(--verde);font-size:.95rem}
+
+/* Bloco de conclusão da aula */
+.conclusao{
+  display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;
+  margin-top:22px;padding:1.15rem 1.3rem;border-radius:var(--r);
+  border:1px solid var(--linha);background:var(--papel);box-shadow:var(--sombra);
+  transition:background .3s ease,border-color .3s ease;
+}
+.conclusao.feita{background:var(--verde-100);border-color:#bfe0c8}
+.conclusao .txt{min-width:210px;flex:1}
+.conclusao .txt strong{display:block;font-size:1.02rem;margin-bottom:.15rem}
+.conclusao .txt > span{display:block;font-size:.87rem;color:var(--tinta-suave);line-height:1.5}
+.conclusao .btn{white-space:nowrap}
+.conclusao .desfazer{
+  background:none;border:0;padding:0;font:inherit;font-size:.83rem;color:var(--tinta-suave);
+  text-decoration:underline;cursor:pointer;
+}
+.conclusao .desfazer:hover{color:var(--verde)}
+
+/* Aviso flutuante de conclusão automática */
+.toque{
+  position:fixed;left:50%;bottom:26px;z-index:200;
+  transform:translateX(-50%) translateY(10px);
+  background:var(--azul);color:#fff;padding:.8rem 1.3rem;border-radius:99px;
+  font-size:.9rem;font-weight:600;box-shadow:0 10px 30px rgba(15,44,74,.3);
+  opacity:0;transition:opacity .28s ease,transform .28s ease;pointer-events:none;
+}
+.toque.ver{opacity:1;transform:translateX(-50%) translateY(0)}
+
+.indice a.proxima{background:#fbfdfc;border-left-color:#cfe0d4}
 
 /* ==========================================================================
    AVALIAÇÃO
@@ -1281,6 +1322,13 @@ const T = {};
 T.inicio = async () => {
   const g = progressoGeral();
   const horas = E.cursos.reduce((s,c)=>s+(c.horas||0),0);
+
+  // Curso mais adiantado ainda em aberto: é o que o professor quer retomar.
+  const retomar = E.cursos
+    .map(c => ({ c, p: progressoDe(c.id) }))
+    .filter(x => x.p.pct > 0 && !x.p.concluido)
+    .sort((a,b) => b.p.pct - a.p.pct)[0];
+
   return `
   <section class="hero">
     <div class="container">
@@ -1299,6 +1347,21 @@ T.inicio = async () => {
       </div>
     </div>
   </section>
+
+  ${retomar ? `
+  <section class="bloco" style="padding-block:1.7rem;background:var(--verde-100);border-bottom:1px solid #cfe3d5">
+    <div class="container" style="display:flex;align-items:center;gap:22px;flex-wrap:wrap;justify-content:space-between">
+      <div style="min-width:260px;flex:1">
+        <span style="font-size:.74rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--verde)">Continue de onde parou</span>
+        <h2 style="margin:.3rem 0 .6rem;font-size:1.3rem">${esc(retomar.c.titulo)}</h2>
+        <div class="barra" style="max-width:430px"><i style="width:${retomar.p.pct}%"></i></div>
+        <p style="margin:.5rem 0 0;font-size:.86rem;color:var(--tinta-suave)">
+          ${retomar.p.feitas.length} de ${retomar.p.total} aulas concluídas
+        </p>
+      </div>
+      <a class="btn btn-primario" href="#/curso/${retomar.c.id}">Retomar o curso →</a>
+    </div>
+  </section>` : ''}
 
   <section class="bloco">
     <div class="container">
@@ -1503,25 +1566,40 @@ T.aula = async (cursoId, aulaId) => {
     if (!doModulo.length) return "";
     return `<div class="grupo">${esc(m.titulo)}</div>` + doModulo.map(x=>{
       const ok = p.feitas.includes(x.id);
-      return `<a href="#/aula/${cursoId}/${x.id}" ${x.id===a.id?'aria-current="page"':''}>
+      const seguinte = proxima && x.id === proxima.id;
+      return `<a href="#/aula/${cursoId}/${x.id}" data-aula="${x.id}"
+        class="${seguinte?'proxima':''}" ${x.id===a.id?'aria-current="page"':''}>
         <span class="${ok?'ok':'pendente'}">${ok?'✓':'○'}</span>
         <span>${esc(x.titulo)}</span></a>`;
     }).join("");
   }).join("");
+
+  // Para onde o professor segue ao concluir esta aula.
+  const destino = proxima ? `#/aula/${cursoId}/${proxima.id}`
+                : (c.quizAtivo ? `#/avaliacao/${cursoId}` : `#/curso/${cursoId}`);
+  const rotuloConcluir = proxima ? "Concluir e continuar →"
+                : (c.quizAtivo ? "Concluir e ir para a avaliação →" : "Concluir o curso →");
+  const rotuloSeguir = proxima ? "Próxima aula →"
+                : (c.quizAtivo ? "Ir para a avaliação final →" : "Voltar ao curso →");
 
   return `<section class="bloco"><div class="container">
     <p class="migalha"><a href="#/cursos">Cursos</a> › <a href="#/curso/${cursoId}">${esc(c.titulo)}</a> › Aula ${i+1}</p>
 
     <div class="aula-moldura">
       <div>
-        <h1 style="font-size:1.6rem">${esc(a.titulo)}</h1>
-        <p style="color:var(--tinta-suave);font-size:.9rem;margin-bottom:1.2rem">
-          Aula ${i+1} de ${aulas.length}${a.duracaoMin?` · ${a.duracaoMin} minutos`:''}
-        </p>
+        <div class="faixa-progresso">
+          <div class="rot">
+            <span>Aula ${i+1} de ${aulas.length}${a.duracaoMin?` · ${a.duracaoMin} min`:''}</span>
+            <b id="pctAula">${p.pct}%</b>
+          </div>
+          <div class="barra"><i id="barraAula" style="width:${p.pct}%"></i></div>
+        </div>
+
+        <h1 style="font-size:1.6rem;margin-bottom:1.2rem">${esc(a.titulo)}</h1>
 
         ${videos.length ? `
-          <div class="player"><iframe id="quadro"
-            src="https://www.youtube-nocookie.com/embed/${esc(videos[0].youtubeId)}?rel=0&modestbranding=1"
+          <div class="player" data-videos="${esc(videos.map(v=>v.youtubeId).join(","))}"><iframe id="quadro"
+            src="https://www.youtube-nocookie.com/embed/${esc(videos[0].youtubeId)}?rel=0&modestbranding=1&enablejsapi=1"
             title="${esc(videos[0].titulo||a.titulo)}"
             allow="accelerometer; clipboard-write; encrypted-media; picture-in-picture; fullscreen"
             allowfullscreen loading="lazy"></iframe></div>
@@ -1548,21 +1626,26 @@ T.aula = async (cursoId, aulaId) => {
         ${!videos.length && !a.texto && !materiais.length
           ? '<div class="aviso aviso-info"><span>O conteúdo desta aula ainda está sendo preparado.</span></div>' : ''}
 
-        <div class="painel" style="margin-top:20px;background:${feita?'var(--verde-100)':'var(--papel)'};border-color:${feita?'#bfe0c8':'var(--linha)'}">
-          <label class="aula" style="cursor:pointer;padding:0;border:none;background:none">
-            <input type="checkbox" id="marcarAula" ${feita?'checked':''}>
-            <span class="aula-txt"><strong>${feita?'Aula concluída':'Marcar esta aula como concluída'}</strong>
-            <span>Seu progresso é salvo automaticamente.</span></span>
-          </label>
+        <div class="conclusao ${feita?'feita':''}" id="blocoConclusao"
+             data-destino="${destino}" data-seguir="${esc(rotuloSeguir)}">
+          ${feita
+            ? `<div class="txt">
+                 <strong>✓ Aula concluída</strong>
+                 <button class="desfazer" id="desfazerAula" type="button">desmarcar esta aula</button>
+               </div>
+               <a class="btn btn-primario" href="${destino}">${rotuloSeguir}</a>`
+            : `<div class="txt">
+                 <strong>Terminou esta aula?</strong>
+                 <span>${videos.length
+                   ? 'Ela é marcada sozinha quando você assiste ao vídeo até o fim. Se preferir, marque agora.'
+                   : 'Marcar as aulas é o que libera a avaliação final e o certificado.'}</span>
+               </div>
+               <button class="btn btn-primario" id="concluirAula" type="button">${rotuloConcluir}</button>`}
         </div>
 
         <div class="nav-aula">
           ${anterior?`<a class="btn btn-secundario" href="#/aula/${cursoId}/${anterior.id}">← ${esc(anterior.titulo.slice(0,34))}${anterior.titulo.length>34?'…':''}</a>`:'<span></span>'}
-          ${proxima
-            ? `<a class="btn btn-primario" href="#/aula/${cursoId}/${proxima.id}">Próxima aula →</a>`
-            : (c.quizAtivo
-                ? `<a class="btn btn-primario" href="#/avaliacao/${cursoId}">Ir para a avaliação final →</a>`
-                : `<a class="btn btn-primario" href="#/curso/${cursoId}">Voltar ao curso →</a>`)}
+          <a class="btn btn-fantasma" href="#/curso/${cursoId}">Ver todo o conteúdo do curso</a>
         </div>
       </div>
 
@@ -1853,6 +1936,7 @@ T.privacidade = async () => `
 
     <h2>4. Vídeos incorporados</h2>
     <p>As videoaulas são exibidas pelo YouTube em modo de privacidade reforçada (youtube-nocookie.com), que não instala cookies de rastreamento antes de você iniciar a reprodução.</p>
+    <p>Para marcar a aula sozinha quando você termina de assistir, a página carrega o componente de player do YouTube e acompanha apenas o quanto do vídeo já passou. O que fica guardado no seu progresso é o identificador dos vídeos que você concluiu, nada além disso. A Academia não acompanha o que você assiste fora dela.</p>
 
     <h2>5. Com quem compartilhamos</h2>
     <p>Não vendemos e não cedemos seus dados a terceiros para fins comerciais. Utilizamos o Google Firebase como operador de infraestrutura. Para redes parceiras, compartilhamos apenas dados de servidores vinculados àquela rede, para comprovação de formação.</p>
@@ -1964,43 +2048,193 @@ function ligarCurso(id){
   $$("[data-login]").forEach(b=>b.addEventListener("click", abrirLogin));
 }
 
+/* Aviso curto e discreto no rodapé da tela. */
+let tempoToque = null;
+function toque(texto){
+  let el = $("#toque");
+  if (!el){
+    el = document.createElement("div");
+    el.id = "toque"; el.className = "toque";
+    el.setAttribute("role","status");
+    document.body.appendChild(el);
+  }
+  el.textContent = texto;
+  requestAnimationFrame(()=>el.classList.add("ver"));
+  clearTimeout(tempoToque);
+  tempoToque = setTimeout(()=>el.classList.remove("ver"), 3600);
+}
+
+/* Marca ou desmarca uma aula. Usada tanto pelo botão de conclusão quanto pela
+   marcação automática do vídeo, para as duas não saírem de sincronia. */
+async function definirConclusao(cursoId, aulaId, concluir){
+  const c = await Dados.lerCurso(cursoId);
+  const aulas = aulasOrdenadas(c);
+  const p = progressoDe(cursoId, aulas.length);
+  const set = new Set(p.feitas);
+  concluir ? set.add(aulaId) : set.delete(aulaId);
+
+  const lista = [...set];
+  const pct = aulas.length ? Math.round(lista.length/aulas.length*100) : 0;
+  const completo = aulas.length > 0 && lista.length >= aulas.length;
+  const anterior = E.progresso[cursoId] || {};
+
+  await Dados.salvarProgresso(cursoId, {
+    ...anterior,
+    cursoId, aulas:lista, percentual:pct, concluido: completo,
+    // Registrado na primeira aula marcada e nunca sobrescrito: é o início do
+    // período de realização impresso no certificado.
+    iniciadoEmISO: anterior.iniciadoEmISO || new Date().toISOString(),
+    // Idem para a conclusão — se o professor desmarcar e marcar de novo,
+    // a data original permanece.
+    concluidoEmISO: completo ? (anterior.concluidoEmISO || new Date().toISOString()) : null
+  });
+
+  if (concluir){
+    if (!anterior.iniciadoEmISO) evento("curso_iniciado", { curso: cursoId });
+    evento("aula_concluida", { curso: cursoId, aula: aulaId });
+    if (completo && !anterior.concluido) evento("curso_concluido", { curso: cursoId });
+  }
+  return { pct, completo };
+}
+
+/* Guarda quais vídeos o professor assistiu até o fim. Alimenta o relatório de
+   adesão: adesão medida por vídeo assistido vale muito mais numa prestação de
+   contas do que adesão medida por clique em caixinha. */
+async function registrarVideoAssistido(cursoId, aulaId, ytId){
+  const anterior = E.progresso[cursoId] || {};
+  const mapa = { ...(anterior.videosAssistidos||{}) };
+  const jaVistos = new Set(mapa[aulaId] || []);
+  if (jaVistos.has(ytId)) return;
+  jaVistos.add(ytId);
+  mapa[aulaId] = [...jaVistos];
+  await Dados.salvarProgresso(cursoId, { ...anterior, cursoId, videosAssistidos: mapa });
+}
+
+/* Carrega a API do player do YouTube uma única vez por sessão. Se ela não vier
+   (rede bloqueada, extensão do navegador), nada quebra: a aula continua
+   funcionando pelo botão de conclusão. */
+let apiYoutube = null;
+function comApiYoutube(entao){
+  if (window.YT?.Player) return entao();
+  if (!apiYoutube){
+    apiYoutube = new Promise(resolve=>{
+      const antes = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = ()=>{ try{ antes?.(); }catch{} resolve(); };
+      const s = document.createElement("script");
+      s.src = "https://www.youtube.com/iframe_api";
+      s.onerror = ()=>resolve();
+      document.head.appendChild(s);
+      setTimeout(resolve, 8000);
+    });
+  }
+  apiYoutube.then(()=>{ if (window.YT?.Player) entao(); });
+}
+
 function ligarAula(cursoId, aulaId){
+  const bloco   = $("#blocoConclusao");
+  const destino = bloco?.dataset.destino || `#/curso/${cursoId}`;
+  const seguir  = bloco?.dataset.seguir  || "Continuar →";
+
+  /* Vira o bloco para o estado "concluída" sem redesenhar a tela inteira.
+     Redesenhar mataria o player no meio do vídeo, que é justamente quando a
+     marcação automática dispara. */
+  const pintarConcluida = pct => {
+    const b = $("#blocoConclusao");
+    if (b){
+      b.classList.add("feita");
+      b.innerHTML = `<div class="txt">
+          <strong>✓ Aula concluída</strong>
+          <button class="desfazer" id="desfazerAula" type="button">desmarcar esta aula</button>
+        </div>
+        <a class="btn btn-primario" href="${destino}">${seguir}</a>`;
+      ligarDesfazer();
+    }
+    const rot = $("#pctAula"), barra = $("#barraAula");
+    if (rot)   rot.textContent = pct + "%";
+    if (barra) barra.style.width = pct + "%";
+    const noIndice = document.querySelector(`.indice a[data-aula="${aulaId}"] span`);
+    if (noIndice){ noIndice.className = "ok"; noIndice.textContent = "✓"; }
+  };
+
+  function ligarDesfazer(){
+    $("#desfazerAula")?.addEventListener("click", async ()=>{
+      await definirConclusao(cursoId, aulaId, false);
+      await renderizar();
+    });
+  }
+  ligarDesfazer();
+
+  $("#concluirAula")?.addEventListener("click", async e=>{
+    const b = e.currentTarget;
+    b.disabled = true; b.textContent = "Salvando…";
+    await definirConclusao(cursoId, aulaId, true);
+    location.hash = destino;
+  });
+
+  /* ---- Marcação automática pelo vídeo assistido ---- */
+  const moldura = $("#quadro")?.closest(".player");
+  const listaVideos = (moldura?.dataset.videos || "").split(",").filter(Boolean);
+  if (!moldura || !listaVideos.length) return;
+
+  const assistidos = new Set((E.progresso[cursoId]?.videosAssistidos||{})[aulaId] || []);
+  let emCartaz = listaVideos[0];
+  let player = null, relogio = null;
+
+  const concluirSeAssistiuTudo = async () => {
+    if (listaVideos.some(v => !assistidos.has(v))) return;
+    if (progressoDe(cursoId).feitas.includes(aulaId)) return;
+    const { pct } = await definirConclusao(cursoId, aulaId, true);
+    pintarConcluida(pct);
+    toque("Aula concluída. Pode seguir quando quiser.");
+  };
+
+  const marcarEmCartaz = async () => {
+    if (assistidos.has(emCartaz)) return;
+    assistidos.add(emCartaz);
+    await registrarVideoAssistido(cursoId, aulaId, emCartaz);
+    await concluirSeAssistiuTudo();
+  };
+
+  // O YouTube não avisa quando passa dos 90%, então conferimos a cada 2 segundos
+  // enquanto o vídeo está tocando. Fora da reprodução o relógio fica parado.
+  const vigiar = () => {
+    clearInterval(relogio);
+    relogio = setInterval(()=>{
+      try {
+        const total = player.getDuration(), agora = player.getCurrentTime();
+        if (total > 0 && agora / total >= 0.9){ clearInterval(relogio); marcarEmCartaz(); }
+      } catch { clearInterval(relogio); }
+    }, 2000);
+  };
+
+  comApiYoutube(()=>{
+    if (!document.getElementById("quadro")) return;   // já saiu da tela
+    try {
+      player = new YT.Player("quadro", {
+        events: {
+          onStateChange: ev => {
+            if (ev.data === YT.PlayerState.PLAYING) vigiar();
+            else if (ev.data === YT.PlayerState.ENDED){ clearInterval(relogio); marcarEmCartaz(); }
+            else clearInterval(relogio);
+          }
+        }
+      });
+    } catch {}
+  });
+
   // Troca de vídeo dentro da mesma aula
   $$("[data-video]").forEach(b=>b.addEventListener("click", ()=>{
+    emCartaz = b.dataset.video;
+    clearInterval(relogio);
+    if (player?.loadVideoById) player.loadVideoById(emCartaz);
+    else {
+      const quadro = $("#quadro");
+      quadro.src = `https://www.youtube-nocookie.com/embed/${emCartaz}?rel=0&modestbranding=1&enablejsapi=1&autoplay=1`;
+    }
     const quadro = $("#quadro");
-    quadro.src = `https://www.youtube-nocookie.com/embed/${b.dataset.video}?rel=0&modestbranding=1&autoplay=1`;
-    quadro.title = b.dataset.titulo;
+    if (quadro) quadro.title = b.dataset.titulo;
     $$("[data-video]").forEach(x=>x.setAttribute("aria-pressed", x===b));
   }));
-
-  $("#marcarAula")?.addEventListener("change", async e=>{
-    const c = await Dados.lerCurso(cursoId);
-    const aulas = aulasOrdenadas(c);
-    const p = progressoDe(cursoId, aulas.length);
-    const set = new Set(p.feitas);
-    e.target.checked ? set.add(aulaId) : set.delete(aulaId);
-    const lista = [...set];
-    const pct = Math.round(lista.length/aulas.length*100);
-    const completo = lista.length >= aulas.length;
-    const anterior = E.progresso[cursoId] || {};
-
-    await Dados.salvarProgresso(cursoId, {
-      cursoId, aulas:lista, percentual:pct, concluido: completo,
-      // Registrado na primeira aula marcada e nunca sobrescrito: é o início do
-      // período de realização impresso no certificado.
-      iniciadoEmISO: anterior.iniciadoEmISO || new Date().toISOString(),
-      // Idem para a conclusão — se o professor desmarcar e marcar de novo,
-      // a data original permanece.
-      concluidoEmISO: completo ? (anterior.concluidoEmISO || new Date().toISOString()) : null
-    });
-
-    if (e.target.checked){
-      if (!anterior.iniciadoEmISO) evento("curso_iniciado", { curso: cursoId });
-      evento("aula_concluida", { curso: cursoId, aula: aulaId });
-      if (completo && !anterior.concluido) evento("curso_concluido", { curso: cursoId });
-    }
-    await renderizar();
-  });
 }
 
 function ligarAvaliacao(cursoId){
