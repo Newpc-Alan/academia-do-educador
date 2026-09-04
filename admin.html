@@ -135,6 +135,20 @@ label.rot{display:block;font-size:.83rem;font-weight:600;margin:0 0 .3rem;color:
 .al-j{text-align:justify}
 .esp-l{line-height:2.1}
 .esp-c{line-height:1.45}
+
+/* Imagens dentro do editor: mesma aparência que o professor vai ver */
+.editor .area figure{margin:1.1rem 0;text-align:center}
+.editor .area figure img{
+  display:block;width:100%;height:auto;margin:0 auto;
+  border-radius:var(--r-sm);border:1px solid var(--linha);background:#fff;
+}
+.editor .area figcaption{
+  margin-top:.45rem;font-size:.82rem;color:var(--suave);font-style:italic;text-align:center;
+}
+.editor .area figure.img-g img{max-width:100%}
+.editor .area figure.img-m img{max-width:68%}
+.editor .area figure.img-p img{max-width:42%}
+.editor .area img{max-width:100%;height:auto}
 .linha{display:grid;gap:14px;margin-bottom:14px}
 .l2{grid-template-columns:1fr 1fr}
 .l3{grid-template-columns:1fr 1fr 1fr}
@@ -343,9 +357,10 @@ const esc = s => String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">
    Tudo que sai daqui passa pelo mesmo filtro que a Academia usa para exibir:
    HTML guardado em banco nunca vai para a tela sem ser conferido.
    =========================================================================== */
-const TAGS_BLOCO = ["P","BR","STRONG","B","EM","I","U","S","H2","H3","UL","OL","LI","BLOCKQUOTE","A"];
+const TAGS_BLOCO = ["P","BR","STRONG","B","EM","I","U","S","H2","H3","UL","OL","LI",
+                    "BLOCKQUOTE","A","IMG","FIGURE","FIGCAPTION"];
 const TAGS_LINHA = ["BR","STRONG","B","EM","I","U","S","A"];
-const CLASSES_OK = ["al-e","al-c","al-d","al-j","esp-l","esp-c"];
+const CLASSES_OK = ["al-e","al-c","al-d","al-j","esp-l","esp-c","img-p","img-m","img-g"];
 
 function limparHtml(bruto, apenasLinha = false){
   const permitidas = apenasLinha ? TAGS_LINHA : TAGS_BLOCO;
@@ -370,9 +385,20 @@ function limparHtml(bruto, apenasLinha = false){
           validas.length ? el.setAttribute("class", validas.join(" ")) : el.removeAttribute("class");
           return;
         }
-        if (el.tagName === "A" && nome === "href") return;
+        if (el.tagName === "A"   && nome === "href") return;
+        if (el.tagName === "IMG" && (nome === "src" || nome === "alt")) return;
         el.removeAttribute(at.name);
       });
+
+      // Imagem só pode apontar para o Storage do projeto (https) ou para um
+      // arquivo ainda em memória no navegador. Endereço de outro tipo é sinal
+      // de conteúdo colado de fora, e sai.
+      if (el.tagName === "IMG"){
+        const origem = el.getAttribute("src") || "";
+        if (!/^(https:|blob:)/i.test(origem)) { el.remove(); return; }
+        el.setAttribute("loading", "lazy");
+        el.setAttribute("decoding", "async");
+      }
       if (el.tagName === "A"){
         const destino = el.getAttribute("href") || "";
         if (!/^(https?:|mailto:)/i.test(destino)) el.removeAttribute("href");
@@ -421,7 +447,9 @@ const BOTOES_BLOCO = [
   { classe:"esp-l", grupo:"esp", rotulo:"Linha +", dica:"Espaçamento entre linhas maior" },
   { classe:"esp-c", grupo:"esp", rotulo:"Linha −", dica:"Espaçamento entre linhas menor" },
   { sep:true },
-  { link:true,  rotulo:"🔗", dica:"Inserir link" },
+  { link:true,   rotulo:"🔗", dica:"Inserir link" },
+  { imagem:true, rotulo:"Imagem", dica:"Inserir imagem de referência no texto" },
+  { tamImg:true, rotulo:"Tam. img", dica:"Alternar o tamanho da imagem: grande, média, pequena" },
   { limpar:true, rotulo:"Limpar", dica:"Limpar a formatação do trecho selecionado" }
 ];
 
@@ -442,15 +470,38 @@ function montarEditor(id, valor, o = {}){
           : `<button type="button" title="${esc(b.dica)}" tabindex="-1"
                data-ed="${id}" data-cmd="${esc(b.cmd||"")}" data-bloco="${esc(b.bloco||"")}"
                data-classe="${esc(b.classe||"")}" data-grupo="${esc(b.grupo||"")}"
-               data-link="${b.link?1:""}" data-limpar="${b.limpar?1:""}">${b.rotulo}</button>`
+               data-link="${b.link?1:""}" data-limpar="${b.limpar?1:""}"
+               data-imagem="${b.imagem?1:""}" data-tamimg="${b.tamImg?1:""}">${b.rotulo}</button>`
   ).join("");
 
   return `<div class="editor ${o.linha?"curto":""}">
     <div class="barra">${botoes}</div>
     <div class="area" id="${id}" contenteditable="true" role="textbox" aria-multiline="${o.linha?"false":"true"}"
-         data-inline="${o.linha?1:""}" data-vazio="${esc(o.vazio||"Escreva aqui…")}"
+         data-inline="${o.linha?1:""}" data-curso="${esc(o.curso||"")}" data-vazio="${esc(o.vazio||"Escreva aqui…")}"
          ${o.limite?`data-limite="${o.limite}"`:""}>${textoRico(valor, o.linha)}</div>
   </div>${o.limite?`<p class="ajuda" id="${id}-conta"></p>`:""}`;
+}
+
+/* Reduz a imagem antes de subir. Sem isso uma foto de celular de 6 MB entra
+   inteira na aula, e quem paga a conta é o professor na escola com internet
+   ruim. Mantém a proporção original, diferente da capa, que é recortada. */
+async function prepararImagem(file, larguraMax = 1200){
+  const bitmap = await createImageBitmap(file);
+  const escala = Math.min(1, larguraMax / bitmap.width);
+  const L = Math.round(bitmap.width * escala);
+  const A = Math.round(bitmap.height * escala);
+
+  const c = document.createElement("canvas");
+  c.width = L; c.height = A;
+  const ctx = c.getContext("2d");
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(bitmap, 0, 0, L, A);
+  bitmap.close?.();
+
+  const blob = await new Promise(r => c.toBlob(r, "image/webp", 0.85))
+            || await new Promise(r => c.toBlob(r, "image/jpeg", 0.88));
+  const ext = blob.type.includes("webp") ? "webp" : "jpg";
+  return new File([blob], `imagem-${Date.now()}.${ext}`, { type: blob.type });
 }
 
 // Bloco onde o cursor está, para aplicar alinhamento e espaçamento por classe.
@@ -504,6 +555,82 @@ function ligarEditor(id){
   if (area.dataset.inline)
     area.addEventListener("keydown", e => { if (e.key === "Enter") e.preventDefault(); });
 
+  // Clicar numa imagem dentro do editor guarda qual é, porque a seleção do
+  // navegador em cima de imagem é imprevisível de um navegador para outro.
+  let figuraAtiva = null;
+  area.addEventListener("click", e => {
+    const f = e.target.closest?.("figure");
+    figuraAtiva = (f && area.contains(f)) ? f : null;
+  });
+
+  /* Sobe a imagem e insere no ponto onde o cursor estava. A seleção precisa
+     ser guardada antes de abrir o seletor de arquivo: escolher um arquivo tira
+     o foco do texto e o cursor se perde. */
+  async function inserirImagem(){
+    const curso = area.dataset.curso;
+    if (!curso) return avisar("Abra o curso pelo painel para poder inserir imagens.","erro");
+
+    const sel = window.getSelection();
+    const marca = (sel && sel.rangeCount) ? sel.getRangeAt(0).cloneRange() : null;
+
+    const entrada = document.createElement("input");
+    entrada.type = "file";
+    entrada.accept = "image/png,image/jpeg,image/webp,image/gif";
+    entrada.addEventListener("change", async () => {
+      const arquivo = entrada.files?.[0];
+      if (!arquivo) return;
+      if (arquivo.size > 20 * 1024 * 1024)
+        return avisar("Imagem acima de 20 MB. Reduza antes de subir.","erro");
+
+      try {
+        avisar("Preparando e enviando a imagem…","atencao");
+        const otimizada = await prepararImagem(arquivo);
+        const r = await Api.enviarArquivo(curso, otimizada);
+
+        const legenda = (prompt(
+          "Legenda da imagem.\n\nAparece embaixo dela e também serve de descrição para quem usa leitor de tela. Deixe em branco se a imagem for apenas decorativa.",
+          "") || "").trim();
+
+        const bloco = `<figure class="img-g"><img src="${esc(r.url)}" alt="${esc(legenda)}">`
+                    + (legenda ? `<figcaption>${esc(legenda)}</figcaption>` : "")
+                    + `</figure><p><br></p>`;
+
+        area.focus();
+        if (marca){
+          const s2 = window.getSelection();
+          s2.removeAllRanges();
+          s2.addRange(marca);
+        }
+        document.execCommand("insertHTML", false, bloco);
+        avisar(`Imagem inserida (${tamanho(otimizada.size)}). Não esqueça de salvar.`,"ok");
+        contador();
+      } catch(err){
+        avisar("Falha ao enviar a imagem: " + (err.message || ""),"erro");
+      }
+    });
+    entrada.click();
+  }
+
+  // Alterna grande, média e pequena na imagem em que o editor está.
+  function ciclarTamanho(){
+    let fig = figuraAtiva;
+    if (!fig){
+      const sel = window.getSelection();
+      let no = (sel && sel.rangeCount) ? sel.getRangeAt(0).startContainer : null;
+      if (no && no.nodeType === 3) no = no.parentNode;
+      while (no && no !== area && no.tagName !== "FIGURE") no = no.parentNode;
+      if (no && no !== area) fig = no;
+    }
+    if (!fig) return avisar("Clique na imagem antes de mudar o tamanho.","atencao");
+    const ordem = ["img-g","img-m","img-p"];
+    const nomes = { "img-g":"grande", "img-m":"média", "img-p":"pequena" };
+    const atual = ordem.findIndex(c => fig.classList.contains(c));
+    ordem.forEach(c => fig.classList.remove(c));
+    const escolhido = ordem[(atual + 1) % ordem.length];
+    fig.classList.add(escolhido);
+    avisar(`Imagem ${nomes[escolhido]}.`,"ok");
+  }
+
   $$(`[data-ed="${id}"]`).forEach(b => {
     // mousedown em vez de click: o clique tiraria o cursor de dentro do texto
     b.addEventListener("mousedown", e => {
@@ -531,6 +658,9 @@ function ligarEditor(id){
         if (url && /^(https?:|mailto:)/i.test(url)) document.execCommand("createLink", false, url);
         else if (url) avisar("Endereço inválido. Use um que comece com https:// ou mailto:","erro");
       }
+
+      if (d.imagem) inserirImagem();
+      if (d.tamimg) ciclarTamanho();
 
       if (d.limpar){
         document.execCommand("removeFormat", false, null);
@@ -901,7 +1031,7 @@ T.curso_dados = async id => {
 
     <div class="linha"><div>
       <label class="rot">Descrição completa</label>
-      ${montarEditor("fDescricao", c.descricao, { vazio:"O que o professor vai aprender e por que vale a pena." })}
+      ${montarEditor("fDescricao", c.descricao, { curso:id, vazio:"O que o professor vai aprender e por que vale a pena." })}
       <p class="ajuda">Aparece na página do curso, antes da ementa. É a peça que convence o professor a começar.</p>
     </div></div>
 
@@ -1042,7 +1172,7 @@ T.aula = async (cursoId, aulaId) => {
     </div>
     <div class="linha"><div>
       <label class="rot">Texto de apoio</label>
-      ${montarEditor("aTexto", a.texto, { vazio:"Resumo da aula, roteiro ou instruções da atividade." })}
+      ${montarEditor("aTexto", a.texto, { curso:cursoId, vazio:"Resumo da aula, roteiro ou instruções da atividade." })}
       <p class="ajuda">Aparece abaixo do vídeo. Ao colar de outro lugar, o texto entra limpo: a formatação de origem é descartada de propósito.</p>
     </div></div>
   </div>

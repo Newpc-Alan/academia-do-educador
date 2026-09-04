@@ -445,6 +445,24 @@ footer.rodape a:hover{text-decoration:underline}
 .esp-l{line-height:2.1}
 .esp-c{line-height:1.45}
 
+/* Imagens de referência dentro do texto da aula */
+.rico figure{margin:1.4rem 0;text-align:center}
+.rico figure img{
+  display:block;width:100%;height:auto;margin:0 auto;
+  border-radius:var(--r-sm);border:1px solid var(--linha);background:#fff;
+}
+.rico figcaption{
+  margin-top:.5rem;font-size:.84rem;color:var(--tinta-suave);line-height:1.5;
+  text-align:center;font-style:italic;
+}
+.rico figure.img-g img{max-width:100%}
+.rico figure.img-m img{max-width:68%}
+.rico figure.img-p img{max-width:42%}
+@media (max-width:640px){
+  .rico figure.img-m img,.rico figure.img-p img{max-width:100%}
+}
+.rico img{max-width:100%;height:auto}
+
 .texto-aula{line-height:1.75}
 
 .material{
@@ -1337,9 +1355,10 @@ const esc = s => String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">
    é uma conta da equipe comprometida, ou um dia alguém colar algo estranho
    vindo do Word. Passa apenas a marcação que o próprio editor sabe produzir.
 --------------------------------------------------------------------------- */
-const TAGS_BLOCO  = ["P","BR","STRONG","B","EM","I","U","S","H2","H3","UL","OL","LI","BLOCKQUOTE","A"];
-const TAGS_LINHA  = ["BR","STRONG","B","EM","I","U","S","A"];
-const CLASSES_OK  = ["al-e","al-c","al-d","al-j","esp-l","esp-c"];
+const TAGS_BLOCO = ["P","BR","STRONG","B","EM","I","U","S","H2","H3","UL","OL","LI",
+                    "BLOCKQUOTE","A","IMG","FIGURE","FIGCAPTION"];
+const TAGS_LINHA = ["BR","STRONG","B","EM","I","U","S","A"];
+const CLASSES_OK = ["al-e","al-c","al-d","al-j","esp-l","esp-c","img-p","img-m","img-g"];
 
 function limparHtml(bruto, apenasLinha = false){
   const permitidas = apenasLinha ? TAGS_LINHA : TAGS_BLOCO;
@@ -1369,9 +1388,20 @@ function limparHtml(bruto, apenasLinha = false){
           validas.length ? el.setAttribute("class", validas.join(" ")) : el.removeAttribute("class");
           return;
         }
-        if (el.tagName === "A" && nome === "href") return;
+        if (el.tagName === "A"   && nome === "href") return;
+        if (el.tagName === "IMG" && (nome === "src" || nome === "alt")) return;
         el.removeAttribute(at.name);
       });
+
+      // Imagem só pode apontar para o Storage do projeto (https) ou para um
+      // arquivo ainda em memória no navegador. Endereço de outro tipo é sinal
+      // de conteúdo colado de fora, e sai.
+      if (el.tagName === "IMG"){
+        const origem = el.getAttribute("src") || "";
+        if (!/^(https:|blob:)/i.test(origem)) { el.remove(); return; }
+        el.setAttribute("loading", "lazy");
+        el.setAttribute("decoding", "async");
+      }
 
       if (el.tagName === "A"){
         const destino = el.getAttribute("href") || "";
