@@ -85,6 +85,56 @@ textarea.campo{resize:vertical;min-height:90px;line-height:1.55}
 .campo:focus{border-color:var(--verde);outline:none;box-shadow:0 0 0 3px var(--verde-100)}
 label.rot{display:block;font-size:.83rem;font-weight:600;margin:0 0 .3rem;color:var(--azul)}
 .ajuda{font-size:.79rem;color:var(--suave);margin:.3rem 0 0}
+
+/* ==========================================================================
+   EDITOR DE TEXTO
+   Sem seletor de fonte e sem seletor de tamanho, de propósito: a tipografia
+   é da Academia, não de quem digita. Assim os dez cursos saem com a mesma
+   cara e ninguém publica aula em fonte diferente das outras.
+   ========================================================================== */
+.editor{border:1px solid var(--linha);border-radius:var(--r-sm);background:#fff;overflow:hidden}
+.editor:focus-within{border-color:var(--verde);box-shadow:0 0 0 3px var(--verde-100)}
+
+.editor .barra{
+  display:flex;flex-wrap:wrap;gap:3px;padding:6px 7px;
+  background:#f6f9fb;border-bottom:1px solid var(--linha);
+}
+.editor .barra button{
+  min-width:30px;height:29px;padding:0 7px;border:1px solid transparent;border-radius:5px;
+  background:none;font-family:inherit;font-size:.83rem;font-weight:600;color:var(--azul);
+  cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
+}
+.editor .barra button:hover{background:#e6eef5;border-color:#d3dfe9}
+.editor .barra button:active{background:#d8e4ee}
+.editor .barra .sep{width:1px;background:var(--linha);margin:2px 4px}
+
+.editor .area{
+  min-height:170px;max-height:460px;overflow-y:auto;padding:.85rem 1rem;
+  font-size:.94rem;line-height:1.7;color:var(--tinta);outline:none;
+}
+.editor.curto .area{min-height:64px}
+.editor .area:empty::before{content:attr(data-vazio);color:var(--suave)}
+.editor .area > *:first-child{margin-top:0}
+.editor .area > *:last-child{margin-bottom:0}
+.editor .area p{margin:0 0 .9rem}
+.editor .area h2{font-size:1.16rem;margin:1.3rem 0 .5rem;color:var(--azul)}
+.editor .area h3{font-size:1.02rem;margin:1.1rem 0 .4rem;color:var(--azul)}
+.editor .area ul,.editor .area ol{margin:0 0 .9rem;padding-left:1.4rem}
+.editor .area li{margin-bottom:.35rem}
+.editor .area blockquote{
+  margin:0 0 .9rem;padding:.3rem 0 .3rem 1rem;border-left:3px solid var(--verde);
+  color:var(--suave);font-style:italic;
+}
+.editor .area a{color:var(--azul);text-decoration:underline}
+
+/* As mesmas classes que a Academia usa para exibir, para o editor mostrar
+   exatamente o que o professor vai ver. */
+.al-e{text-align:left}
+.al-c{text-align:center}
+.al-d{text-align:right}
+.al-j{text-align:justify}
+.esp-l{line-height:2.1}
+.esp-c{line-height:1.45}
 .linha{display:grid;gap:14px;margin-bottom:14px}
 .l2{grid-template-columns:1fr 1fr}
 .l3{grid-template-columns:1fr 1fr 1fr}
@@ -280,6 +330,224 @@ const TIPOS_ARQUIVO = {
 const $  = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+
+/* ===========================================================================
+   EDITOR DE TEXTO FORMATADO
+
+   O texto das aulas e a descrição do curso passaram a aceitar negrito,
+   títulos, listas, citação, link, alinhamento e espaçamento. O que NÃO existe
+   aqui, de propósito, é seletor de fonte e de tamanho: a tipografia pertence
+   à identidade da Academia. Sem essa amarra, em três meses cada curso estaria
+   com uma cara diferente e arrumar depois custaria mais do que fazer certo.
+
+   Tudo que sai daqui passa pelo mesmo filtro que a Academia usa para exibir:
+   HTML guardado em banco nunca vai para a tela sem ser conferido.
+   =========================================================================== */
+const TAGS_BLOCO = ["P","BR","STRONG","B","EM","I","U","S","H2","H3","UL","OL","LI","BLOCKQUOTE","A"];
+const TAGS_LINHA = ["BR","STRONG","B","EM","I","U","S","A"];
+const CLASSES_OK = ["al-e","al-c","al-d","al-j","esp-l","esp-c"];
+
+function limparHtml(bruto, apenasLinha = false){
+  const permitidas = apenasLinha ? TAGS_LINHA : TAGS_BLOCO;
+  const molde = document.createElement("div");
+  molde.innerHTML = String(bruto ?? "");
+  molde.querySelectorAll("script,style,iframe,object,embed,link,meta,form,input,button,svg")
+       .forEach(e => e.remove());
+
+  const visitar = pai => {
+    [...pai.children].forEach(el => {
+      visitar(el);
+      if (!permitidas.includes(el.tagName)){
+        const conteudo = document.createDocumentFragment();
+        while (el.firstChild) conteudo.appendChild(el.firstChild);
+        el.replaceWith(conteudo);
+        return;
+      }
+      [...el.attributes].forEach(at => {
+        const nome = at.name.toLowerCase();
+        if (nome === "class"){
+          const validas = at.value.split(/\s+/).filter(c => CLASSES_OK.includes(c));
+          validas.length ? el.setAttribute("class", validas.join(" ")) : el.removeAttribute("class");
+          return;
+        }
+        if (el.tagName === "A" && nome === "href") return;
+        el.removeAttribute(at.name);
+      });
+      if (el.tagName === "A"){
+        const destino = el.getAttribute("href") || "";
+        if (!/^(https?:|mailto:)/i.test(destino)) el.removeAttribute("href");
+      }
+    });
+  };
+  visitar(molde);
+  return molde.innerHTML.trim();
+}
+
+// Conteúdo salvo antes do editor existir veio como texto puro.
+function textoRico(valor, apenasLinha = false){
+  const s = String(valor ?? "").trim();
+  if (!s) return "";
+  if (!/<[a-z][\s\S]*>/i.test(s)){
+    if (apenasLinha) return esc(s);
+    return s.split(/\n{2,}/).map(p => `<p>${esc(p).replace(/\n/g,"<br>")}</p>`).join("");
+  }
+  return limparHtml(s, apenasLinha);
+}
+
+const soTexto = valor => {
+  const s = String(valor ?? "");
+  if (!/<[a-z][\s\S]*>/i.test(s)) return s;
+  const d = document.createElement("div"); d.innerHTML = s;
+  return (d.textContent || "").replace(/\s+/g," ").trim();
+};
+
+const BOTOES_BLOCO = [
+  { cmd:"bold",      rotulo:"<b>N</b>",  dica:"Negrito (Ctrl+B)" },
+  { cmd:"italic",    rotulo:"<i>I</i>",  dica:"Itálico (Ctrl+I)" },
+  { cmd:"underline", rotulo:"<u>S</u>",  dica:"Sublinhado (Ctrl+U)" },
+  { sep:true },
+  { bloco:"<h2>", rotulo:"T1", dica:"Título de seção" },
+  { bloco:"<h3>", rotulo:"T2", dica:"Subtítulo" },
+  { bloco:"<p>",  rotulo:"¶",  dica:"Texto normal" },
+  { sep:true },
+  { cmd:"insertUnorderedList", rotulo:"•—", dica:"Lista com marcadores" },
+  { cmd:"insertOrderedList",   rotulo:"1—", dica:"Lista numerada" },
+  { bloco:"<blockquote>",      rotulo:"❝",  dica:"Citação destacada" },
+  { sep:true },
+  { classe:"al-e", grupo:"al", rotulo:"Esq", dica:"Alinhar à esquerda" },
+  { classe:"al-c", grupo:"al", rotulo:"Centro", dica:"Centralizar" },
+  { classe:"al-j", grupo:"al", rotulo:"Just", dica:"Justificar" },
+  { sep:true },
+  { classe:"esp-l", grupo:"esp", rotulo:"Linha +", dica:"Espaçamento entre linhas maior" },
+  { classe:"esp-c", grupo:"esp", rotulo:"Linha −", dica:"Espaçamento entre linhas menor" },
+  { sep:true },
+  { link:true,  rotulo:"🔗", dica:"Inserir link" },
+  { limpar:true, rotulo:"Limpar", dica:"Limpar a formatação do trecho selecionado" }
+];
+
+const BOTOES_LINHA = [
+  { cmd:"bold",      rotulo:"<b>N</b>", dica:"Negrito" },
+  { cmd:"italic",    rotulo:"<i>I</i>", dica:"Itálico" },
+  { cmd:"underline", rotulo:"<u>S</u>", dica:"Sublinhado" },
+  { sep:true },
+  { link:true,   rotulo:"🔗", dica:"Inserir link" },
+  { limpar:true, rotulo:"Limpar", dica:"Limpar a formatação do trecho selecionado" }
+];
+
+/* Monta o HTML do editor. `id` é o mesmo que o campo tinha antes, para o resto
+   do painel não precisar mudar de nome. */
+function montarEditor(id, valor, o = {}){
+  const botoes = (o.linha ? BOTOES_LINHA : BOTOES_BLOCO).map(b =>
+    b.sep ? '<span class="sep"></span>'
+          : `<button type="button" title="${esc(b.dica)}" tabindex="-1"
+               data-ed="${id}" data-cmd="${esc(b.cmd||"")}" data-bloco="${esc(b.bloco||"")}"
+               data-classe="${esc(b.classe||"")}" data-grupo="${esc(b.grupo||"")}"
+               data-link="${b.link?1:""}" data-limpar="${b.limpar?1:""}">${b.rotulo}</button>`
+  ).join("");
+
+  return `<div class="editor ${o.linha?"curto":""}">
+    <div class="barra">${botoes}</div>
+    <div class="area" id="${id}" contenteditable="true" role="textbox" aria-multiline="${o.linha?"false":"true"}"
+         data-inline="${o.linha?1:""}" data-vazio="${esc(o.vazio||"Escreva aqui…")}"
+         ${o.limite?`data-limite="${o.limite}"`:""}>${textoRico(valor, o.linha)}</div>
+  </div>${o.limite?`<p class="ajuda" id="${id}-conta"></p>`:""}`;
+}
+
+// Bloco onde o cursor está, para aplicar alinhamento e espaçamento por classe.
+function blocoDoCursor(area){
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return null;
+  let no = sel.getRangeAt(0).startContainer;
+  if (no.nodeType === 3) no = no.parentNode;
+  while (no && no !== area && !["P","H2","H3","LI","BLOCKQUOTE","DIV"].includes(no.tagName))
+    no = no.parentNode;
+  return (no && no !== area) ? no : null;
+}
+
+function ligarEditor(id){
+  const area = document.getElementById(id);
+  if (!area) return;
+  // Sem isto o navegador formata com estilo embutido (span style=...) em vez de
+  // usar as tags. O filtro descartaria de qualquer jeito, mas assim o que está
+  // na tela do editor já é o que vai ser gravado.
+  try {
+    document.execCommand("defaultParagraphSeparator", false, "p");
+    document.execCommand("styleWithCSS", false, false);
+  } catch {}
+
+  const contador = () => {
+    const alvo = document.getElementById(id + "-conta");
+    if (!alvo) return;
+    const n = soTexto(area.innerHTML).length;
+    const limite = Number(area.dataset.limite);
+    alvo.textContent = `${n} de ${limite} caracteres`;
+    alvo.style.color = n > limite ? "var(--erro)" : "var(--suave)";
+  };
+  contador();
+  area.addEventListener("input", contador);
+
+  // Colar sempre como texto limpo. Colar direto do Word traz uma montanha de
+  // marcação que quebra o layout e é exatamente o que o filtro descartaria.
+  area.addEventListener("paste", e => {
+    e.preventDefault();
+    const txt = (e.clipboardData || window.clipboardData).getData("text/plain") || "";
+    if (area.dataset.inline){
+      document.execCommand("insertText", false, txt.replace(/\s+/g, " "));
+    } else {
+      const html = txt.split(/\n{2,}/).map(p => `<p>${esc(p).replace(/\n/g,"<br>")}</p>`).join("");
+      document.execCommand("insertHTML", false, html);
+    }
+    contador();
+  });
+
+  // No campo de uma linha, Enter não cria parágrafo novo.
+  if (area.dataset.inline)
+    area.addEventListener("keydown", e => { if (e.key === "Enter") e.preventDefault(); });
+
+  $$(`[data-ed="${id}"]`).forEach(b => {
+    // mousedown em vez de click: o clique tiraria o cursor de dentro do texto
+    b.addEventListener("mousedown", e => {
+      e.preventDefault();
+      area.focus();
+      const d = b.dataset;
+
+      if (d.cmd)   document.execCommand(d.cmd, false, null);
+      if (d.bloco) document.execCommand("formatBlock", false, d.bloco);
+
+      if (d.classe){
+        const bloco = blocoDoCursor(area);
+        if (bloco){
+          const grupo = CLASSES_OK.filter(c => c.startsWith(d.grupo + "-"));
+          const jaTinha = bloco.classList.contains(d.classe);
+          grupo.forEach(c => bloco.classList.remove(c));
+          if (!jaTinha) bloco.classList.add(d.classe);
+        }
+      }
+
+      if (d.link){
+        const atual = window.getSelection().toString();
+        if (!atual) return avisar("Selecione o texto que vai virar link antes de clicar aqui.","atencao");
+        const url = prompt("Endereço do link:", "https://");
+        if (url && /^(https?:|mailto:)/i.test(url)) document.execCommand("createLink", false, url);
+        else if (url) avisar("Endereço inválido. Use um que comece com https:// ou mailto:","erro");
+      }
+
+      if (d.limpar){
+        document.execCommand("removeFormat", false, null);
+        const bloco = blocoDoCursor(area);
+        if (bloco) CLASSES_OK.forEach(c => bloco.classList.remove(c));
+      }
+      contador();
+    });
+  });
+}
+
+// Devolve o conteúdo já filtrado, pronto para gravar.
+function lerEditor(id){
+  const area = document.getElementById(id);
+  if (!area) return "";
+  return limparHtml(area.innerHTML, Boolean(area.dataset.inline));
+}
 const slug = s => String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"")
   .replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,50);
 const tamanho = b => !b ? "" : b < 1024*1024 ? `${Math.round(b/1024)} KB` : `${(b/1024/1024).toFixed(1)} MB`;
@@ -626,15 +894,15 @@ T.curso_dados = async id => {
     </div></div>
 
     <div class="linha"><div>
-      <label class="rot" for="fResumo">Resumo (aparece no cartão do curso)</label>
-      <input class="campo" id="fResumo" value="${esc(c.resumo||"")}" maxlength="160">
-      <p class="ajuda">Uma frase dizendo o que o professor ganha ao fazer o curso. Máximo 160 caracteres.</p>
+      <label class="rot">Resumo (aparece no cartão do curso)</label>
+      ${montarEditor("fResumo", c.resumo, { linha:true, limite:160, vazio:"Uma frase dizendo o que o professor ganha ao fazer o curso." })}
+      <p class="ajuda">Cartão é espaço curto: use negrito com parcimônia.</p>
     </div></div>
 
     <div class="linha"><div>
-      <label class="rot" for="fDescricao">Descrição completa</label>
-      <textarea class="campo" id="fDescricao" rows="5">${esc(c.descricao||"")}</textarea>
-      <p class="ajuda">Texto exibido na página do curso. Pode conter quebras de linha.</p>
+      <label class="rot">Descrição completa</label>
+      ${montarEditor("fDescricao", c.descricao, { vazio:"O que o professor vai aprender e por que vale a pena." })}
+      <p class="ajuda">Aparece na página do curso, antes da ementa. É a peça que convence o professor a começar.</p>
     </div></div>
 
     <div class="linha l3">
@@ -773,9 +1041,9 @@ T.aula = async (cursoId, aulaId) => {
       </div>
     </div>
     <div class="linha"><div>
-      <label class="rot" for="aTexto">Texto de apoio</label>
-      <textarea class="campo" id="aTexto" rows="7">${esc(a.texto||"")}</textarea>
-      <p class="ajuda">Aparece abaixo do vídeo. Use para resumo, roteiro ou instruções da atividade.</p>
+      <label class="rot">Texto de apoio</label>
+      ${montarEditor("aTexto", a.texto, { vazio:"Resumo da aula, roteiro ou instruções da atividade." })}
+      <p class="ajuda">Aparece abaixo do vídeo. Ao colar de outro lugar, o texto entra limpo: a formatação de origem é descartada de propósito.</p>
     </div></div>
   </div>
 
@@ -893,7 +1161,7 @@ T.curso_publicar = async id => {
   const comVideo = Object.values(c.aulas||{}).filter(a=>a.videos?.length).length;
 
   const itens = [
-    ["Título e resumo preenchidos", Boolean(c.titulo && c.resumo)],
+    ["Título e resumo preenchidos", Boolean(c.titulo && soTexto(c.resumo).trim())],
     ["Carga horária definida",      Number(c.horas) > 0],
     ["Pelo menos 1 módulo",         nModulos > 0],
     ["Pelo menos 1 aula",           nAulas > 0],
@@ -1161,6 +1429,9 @@ function ligarListaCursos(){
 }
 
 function ligarDados(id){
+  ligarEditor("fResumo");
+  ligarEditor("fDescricao");
+
   // ---------- capa do curso ----------
   const entradaCapa = $("#capaInput");
   const abrirSeletor = () => entradaCapa.click();
@@ -1207,8 +1478,8 @@ function ligarDados(id){
     const b = e.currentTarget; b.disabled = true; b.innerHTML = '<span class="girando"></span> Salvando…';
     await Api.salvarCurso(id, {
       titulo:      $("#fTitulo").value.trim(),
-      resumo:      $("#fResumo").value.trim(),
-      descricao:   $("#fDescricao").value,
+      resumo:      lerEditor("fResumo"),
+      descricao:   lerEditor("fDescricao"),
       nivel:       $("#fNivel").value,
       horas:       Number($("#fHoras").value) || 1,
       ordem:       Number($("#fOrdem").value) || 1,
@@ -1275,6 +1546,7 @@ function ligarConteudo(id){
 
 /* ---------- EDITOR DE AULA ---------- */
 function ligarAula(cursoId, aulaId){
+  ligarEditor("aTexto");
   const c = cursoAberto;
   const aula = c.aulas[aulaId];
   let videos    = [...(aula.videos||[])];
@@ -1368,7 +1640,7 @@ function ligarAula(cursoId, aulaId){
       ...aula,
       titulo: $("#aTitulo").value.trim(),
       duracaoMin: Number($("#aDuracao").value) || 0,
-      texto: $("#aTexto").value,
+      texto: lerEditor("aTexto"),
       videos, materiais
     });
     cursoAberto = null;

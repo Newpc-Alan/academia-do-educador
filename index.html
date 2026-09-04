@@ -418,7 +418,34 @@ footer.rodape a:hover{text-decoration:underline}
 }
 .abas-video button[aria-pressed="true"]{background:var(--azul);color:#fff;border-color:var(--azul)}
 
-.texto-aula{white-space:pre-wrap;line-height:1.75}
+/* Conteúdo formatado no painel. A tipografia é definida aqui, não pelo editor:
+   é isso que mantém os dez cursos com a mesma cara. */
+.rico{line-height:1.75}
+.rico > *:first-child{margin-top:0}
+.rico > *:last-child{margin-bottom:0}
+.rico p{margin:0 0 1rem}
+.rico h2{font-size:1.22rem;margin:1.7rem 0 .6rem;color:var(--azul);line-height:1.35}
+.rico h3{font-size:1.06rem;margin:1.35rem 0 .45rem;color:var(--azul);line-height:1.4}
+.rico ul,.rico ol{margin:0 0 1rem;padding-left:1.45rem}
+.rico li{margin-bottom:.42rem}
+.rico blockquote{
+  margin:0 0 1rem;padding:.35rem 0 .35rem 1.1rem;border-left:3px solid var(--verde);
+  color:var(--tinta-suave);font-style:italic;
+}
+.rico a{color:var(--azul);text-decoration:underline}
+.rico strong,.rico b{font-weight:700}
+.rico u{text-decoration:underline}
+
+/* Alinhamento e espaçamento, aplicados por classe e não por estilo solto no
+   HTML: assim o que vem do painel continua passando pelo filtro de segurança. */
+.al-e{text-align:left}
+.al-c{text-align:center}
+.al-d{text-align:right}
+.al-j{text-align:justify}
+.esp-l{line-height:2.1}
+.esp-c{line-height:1.45}
+
+.texto-aula{line-height:1.75}
 
 .material{
   display:flex;align-items:center;gap:12px;padding:.8rem .95rem;border:1px solid var(--linha);
@@ -1299,6 +1326,86 @@ const Dados = MODO_DEMO ? DadosDemo : DadosFirebase;
 const $  = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+/* ---------------------------------------------------------------------------
+   CONTEÚDO FORMATADO VINDO DO PAINEL
+
+   O texto das aulas passou a ser escrito em um editor com negrito, títulos,
+   listas e alinhamento. Isso significa guardar HTML no banco, e HTML guardado
+   em banco nunca deve ir para a tela sem filtro.
+
+   O editor é usado só por admin e editor, então o risco aqui não é o professor:
+   é uma conta da equipe comprometida, ou um dia alguém colar algo estranho
+   vindo do Word. Passa apenas a marcação que o próprio editor sabe produzir.
+--------------------------------------------------------------------------- */
+const TAGS_BLOCO  = ["P","BR","STRONG","B","EM","I","U","S","H2","H3","UL","OL","LI","BLOCKQUOTE","A"];
+const TAGS_LINHA  = ["BR","STRONG","B","EM","I","U","S","A"];
+const CLASSES_OK  = ["al-e","al-c","al-d","al-j","esp-l","esp-c"];
+
+function limparHtml(bruto, apenasLinha = false){
+  const permitidas = apenasLinha ? TAGS_LINHA : TAGS_BLOCO;
+  const molde = document.createElement("div");
+  molde.innerHTML = String(bruto ?? "");
+
+  molde.querySelectorAll("script,style,iframe,object,embed,link,meta,form,input,button,svg")
+       .forEach(e => e.remove());
+
+  // Percorre de dentro para fora: quando uma tag não permitida é desembrulhada,
+  // o conteúdo dela já foi tratado.
+  const visitar = pai => {
+    [...pai.children].forEach(el => {
+      visitar(el);
+
+      if (!permitidas.includes(el.tagName)){
+        const conteudo = document.createDocumentFragment();
+        while (el.firstChild) conteudo.appendChild(el.firstChild);
+        el.replaceWith(conteudo);
+        return;
+      }
+
+      [...el.attributes].forEach(at => {
+        const nome = at.name.toLowerCase();
+        if (nome === "class"){
+          const validas = at.value.split(/\s+/).filter(c => CLASSES_OK.includes(c));
+          validas.length ? el.setAttribute("class", validas.join(" ")) : el.removeAttribute("class");
+          return;
+        }
+        if (el.tagName === "A" && nome === "href") return;
+        el.removeAttribute(at.name);
+      });
+
+      if (el.tagName === "A"){
+        const destino = el.getAttribute("href") || "";
+        if (!/^(https?:|mailto:)/i.test(destino)) el.removeAttribute("href");
+        el.setAttribute("target", "_blank");
+        el.setAttribute("rel", "noopener");
+      }
+    });
+  };
+  visitar(molde);
+  return molde.innerHTML;
+}
+
+/* Conteúdo antigo foi salvo como texto puro. Em vez de exigir que a equipe
+   reescreva tudo, o texto sem marcação vira parágrafos na hora de exibir. */
+function textoRico(valor, apenasLinha = false){
+  const s = String(valor ?? "").trim();
+  if (!s) return "";
+  if (!/<[a-z][\s\S]*>/i.test(s)){
+    if (apenasLinha) return esc(s);
+    return s.split(/\n{2,}/).map(p => `<p>${esc(p).replace(/\n/g, "<br>")}</p>`).join("");
+  }
+  return limparHtml(s, apenasLinha);
+}
+
+// Versão sem marcação nenhuma: usada em busca, em atributos e em meta tags.
+function soTexto(valor){
+  const s = String(valor ?? "");
+  if (!/<[a-z][\s\S]*>/i.test(s)) return s;
+  const d = document.createElement("div");
+  d.innerHTML = s;
+  return (d.textContent || "").replace(/\s+/g, " ").trim();
+}
+
 const dataBR = iso => iso ? new Date(iso).toLocaleDateString("pt-BR",{day:"2-digit",month:"long",year:"numeric"}) : "";
 const dataCurta = iso => iso ? new Date(iso).toLocaleDateString("pt-BR") : "";
 const tamanho = b => !b ? "" : b < 1024*1024 ? `${Math.round(b/1024)} KB` : `${(b/1024/1024).toFixed(1)} MB`;
@@ -1452,7 +1559,7 @@ function cartaoCurso(c){
       ${p.concluido ? '<span class="etiqueta et-ok">Concluído</span>' : ''}
     </div>
     <h3>${esc(c.titulo)}</h3>
-    <p class="desc">${esc(c.resumo||"")}</p>
+    <p class="desc rico">${textoRico(c.resumo, true)}</p>
     ${p.pct>0 ? `<div><div class="barra-rotulo"><span>Progresso</span><span>${p.pct}%</span></div><div class="barra"><i style="width:${p.pct}%"></i></div></div>` : ''}
     <div class="cartao-rodape">
       <a class="btn btn-secundario" href="#/curso/${c.id}">${p.pct>0?'Continuar':'Conhecer curso'} →</a>
@@ -1694,9 +1801,9 @@ T.curso = async id => {
           ${c.quizAtivo?`<span class="etiqueta et-horas">avaliação: ${c.quizNotaCorte||70}%</span>`:''}
         </div>
         <h1 style="margin-top:.6rem">${esc(c.titulo)}</h1>
-        <p style="color:var(--tinta-suave);font-size:1.03rem">${esc(c.resumo||"")}</p>
+        <p class="rico" style="color:var(--tinta-suave);font-size:1.03rem">${textoRico(c.resumo, true)}</p>
         ${c.capaURL ? `<div class="capa-curso"><img src="${esc(c.capaURL)}" alt="" decoding="async"></div>` : ''}
-        ${c.descricao ? `<div class="texto-aula" style="margin-bottom:1.6rem">${esc(c.descricao)}</div>` : ''}
+        ${c.descricao ? `<div class="rico" style="margin-bottom:1.6rem">${textoRico(c.descricao)}</div>` : ''}
 
         <div class="aviso aviso-info" style="margin-bottom:1.4rem"><span>
           <b>Como este curso funciona</b>
@@ -1837,7 +1944,7 @@ T.aula = async (cursoId, aulaId) => {
 
         ${a.texto ? `<div class="painel" style="margin-top:${videos.length?'20px':'0'}">
           <h2 style="font-size:1.15rem">Sobre esta aula</h2>
-          <div class="texto-aula">${esc(a.texto)}</div>
+          <div class="rico">${textoRico(a.texto)}</div>
         </div>` : ''}
 
         ${materiais.length ? `<div class="painel">
@@ -2297,7 +2404,7 @@ function ligarFiltros(){
     const tr = $("#fTrilha").value;
     const ids = tr ? (E.trilhas.find(t=>t.id===tr)?.cursos||[]) : null;
     const lista = E.cursos.filter(c =>
-      (!q  || `${c.titulo} ${c.resumo||""}`.toLowerCase().includes(q)) &&
+      (!q  || `${c.titulo} ${soTexto(c.resumo)}`.toLowerCase().includes(q)) &&
       (!nv || c.nivel === nv) &&
       (!ids || ids.includes(c.id)));
     $("#listaCursos").innerHTML = lista.map(cartaoCurso).join("");
