@@ -11,3 +11,10 @@ scripts/node_modules/
 _p-*.png
 _a-*.png
 _preview-*.png
+
+# Ambientes locais e credenciais
+.env
+.env.*
+!functions/.env.example
+*chave*servico*.json
+*service-account*.json

@@ -1,301 +1,236 @@
-# Roteiro de publicação — Academia do Educador
+# Implantação da atualização v2 — Firebase + GitHub Pages
 
-Da pasta no seu computador até `academia.portaldoeducador.com.br` no ar.
-**Tempo estimado: 1h30 a 2h** na primeira vez, quase tudo esperando propagação.
+Este é o guia atual. Use o projeto que já existe; não crie outro Firebase e não rode `firebase init`.
 
-Faça na ordem. Vários passos dependem do anterior — pular ordem é o que faz travar.
+O pacote mantém o projeto `portal-educador-academia-a1b2c`, a região `southamerica-east1` e o domínio configurado no ZIP original. Não acessei seu console nem publiquei mudanças na sua conta.
 
----
+## 1. O que muda para os alunos
 
-## Antes de começar, tenha em mãos
+- Certificados existentes continuam armazenados e seus códigos continuam consultáveis, inclusive códigos antigos de seis caracteres. A consulta pública passa por uma função que devolve apenas os campos permitidos. CPF completo e e-mail ficam privados.
+- O histórico antigo de aulas não é apagado. Para uma nova certificação, as aulas precisam ser concluídas novamente com o acompanhamento v2. O percentual exibido usa as aulas verificadas pelo novo mecanismo; isso pode aparecer como progresso menor após a atualização. Certificados já emitidos continuam em Meus certificados.
+- Avaliações antigas ainda abertas precisam ser reabertas para receber o formato v2. Avaliações já corrigidas e certificados não são apagados. Uma aprovação antiga, sem certificado, não dispensa a revalidação das aulas.
+- Curso publicado fica protegido contra edição. Para alterar conteúdo, abra Publicação → Criar nova versão. A cópia tem outro identificador, começa em rascunho e não herda matrículas, progresso ou certificados.
+- Não retire do ar a versão antiga enquanto houver alunos nela. Mudar seu status para rascunho/revisão retira o acesso. As duas versões podem ficar publicadas ao mesmo tempo.
 
-- [ ] Acesso à conta Google **suporte@portaldoeducador.com.br**
-- [ ] **CNPJ e razão social** da NEWPC
-- [ ] Um **cartão de crédito** (para ativar o plano Blaze — não será cobrado no seu volume)
-- [ ] Acesso ao **painel de DNS** do domínio `portaldoeducador.com.br`
-- [ ] Acesso ao **GitHub** da conta `Newpc-Alan`
-- [ ] **Node.js** instalado (`node -v` deve responder algo como v20 ou superior)
+Faça a implantação em um período sem avaliações em andamento. Entre a atualização das regras e a publicação dos HTML, o site antigo pode apresentar erros de salvamento ou validação. Atualize os dois lados na mesma janela.
 
----
+## 2. Preparar o computador
 
-## ETAPA 1 — Dados do emissor  ·  10 min  ·  no seu computador
+Use **Node.js 22**, Git e PowerShell. O script usa `npm.cmd` e `npx.cmd`, evitando a restrição comum a arquivos `npm.ps1` no Windows.
 
-Abra `index.html` em um editor de texto e localize o bloco `EMISSOR`, logo no começo do
-`<script type="module">`. Preencha:
-
-```js
-const EMISSOR = {
-  razaoSocial: "NEWPC TECNOLOGIA LTDA",     // razão social exata do cartão CNPJ
-  nomeFantasia: "Portal do Educador",
-  cnpj:      "00.000.000/0001-00",          // ← O SEU CNPJ
-  endereco:  "Campo Grande — MS",
-  site:      "portaldoeducador.com.br",
-  responsavel: "Alan Valerio Pires Ramos",
-  cargo:       "Diretor",
-  assinatura: ""                            // deixe vazio por enquanto
-};
+```powershell
+node -v
+git --version
 ```
 
-Abra o `validar.html` e repita **razaoSocial, cnpj e endereco** no bloco `EMISSOR` de lá.
+Se Node não mostrar `v22...`, instale a versão 22 e reabra o PowerShell. A versão das Functions está definida como Node 22.
 
-> **Confere:** abra o `index.html` no navegador, conclua um curso qualquer e emita o certificado.
-> O CNPJ tem que aparecer no cabeçalho do documento.
+Não é necessário instalar Firebase CLI globalmente. `npm ci` instalará a versão fixada no pacote.
 
----
+## 3. Fazer backup do repositório atual
 
-## ETAPA 2 — Criar o projeto Firebase  ·  15 min  ·  no navegador
+Extraia o ZIP atualizado em uma pasta separada. Nos exemplos abaixo, altere **somente os dois caminhos** para as pastas reais do seu computador.
 
-1. Acesse **console.firebase.google.com** com a conta suporte@portaldoeducador.com.br
-2. **Adicionar projeto** → nome `portal-educador-academia` → avançar até criar
-
-### 2.1 Ativar o plano Blaze
-
-Menu lateral → engrenagem → **Uso e faturamento** → **Detalhes e configurações** → **Modificar plano**
-→ **Blaze**. Cadastre o cartão.
-
-Ainda nessa tela, crie um **alerta de orçamento de R$ 50**. Não é medo — é higiene: qualquer coisa
-fora do previsto te avisa antes de virar fatura.
-
-### 2.2 Autenticação
-
-**Criação → Authentication → Vamos começar**
-
-- Ative **Google** → escolha o e-mail de suporte do projeto → Salvar
-- Ative **E-mail/senha** → dentro dele, ligue também **Link de e-mail (login sem senha)** → Salvar
-
-Vá em **Authentication → Configurações → Domínios autorizados** e adicione:
-
-```
-academia.portaldoeducador.com.br
-newpc-alan.github.io
+```powershell
+$repoAcademia = 'C:\Projetos\academia-do-educador'
+$novaAcademia = 'C:\Downloads\academia-do-educador'
+Set-Location $repoAcademia
+git status --short
+git remote -v
 ```
 
-> Sem isso o login retorna `auth/unauthorized-domain` e nada funciona.
+Confirme que é o repositório correto. Se `git status` listar arquivos modificados, salve seu trabalho antes de prosseguir. O backup por Git abaixo inclui arquivos já registrados no repositório; não inclui arquivos locais não versionados.
 
-### 2.3 Banco de dados
-
-**Criação → Firestore Database → Criar banco de dados**
-
-- Local: **southamerica-east1 (São Paulo)** ← escolha errado aqui não tem como desfazer depois
-- Modo: **produção**
-
-### 2.4 Arquivos
-
-**Criação → Storage → Vamos começar** → mesmo local **southamerica-east1**
-
----
-
-## ETAPA 3 — Conectar o código ao projeto  ·  10 min
-
-No console: **engrenagem → Configurações do projeto → Seus apps → ícone `</>`**
-Registre o app como `academia-web`. O Firebase mostra um bloco assim:
-
-```js
-const firebaseConfig = {
-  apiKey: "AIzaSy...",
-  authDomain: "portal-educador-academia-a1b2c.firebaseapp.com",
-  projectId: "portal-educador-academia-a1b2c",
-  storageBucket: "portal-educador-academia-a1b2c.firebasestorage.app",
-  messagingSenderId: "000000000000",
-  appId: "1:000000000000:web:abc123"
-};
+```powershell
+$marcaAcademia = 'backup-antes-v2-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+git tag $marcaAcademia
+$zipBackupAcademia = Join-Path (Split-Path $repoAcademia -Parent) ($marcaAcademia + '.zip')
+git archive --format=zip --output=$zipBackupAcademia HEAD
 ```
 
-Cole esses valores na constante `FIREBASE_CONFIG` de **três arquivos**: `index.html`, `admin.html` e
-`validar.html`. **Descomente as linhas** (tire as `//`).
+Guarde também a configuração do projeto Firebase. Se já usa exportação/backup do Firestore, faça um ponto de recuperação antes de atualizar. Esta versão não executa migração destrutiva nem exclui alunos, cursos ou certificados.
 
-> A `apiKey` ficar visível no código é normal e não é falha de segurança. Ela só identifica o
-> projeto. Quem protege os dados são as regras que vamos publicar agora e a lista de domínios
-> autorizados que você já configurou.
+**Nunca coloque chave de conta de serviço no GitHub.** Este deploy usa `firebase login`; não pede download de chave privada.
 
----
+## 4. Copiar a atualização para o repositório
 
-## ETAPA 4 — Publicar regras, índices e Functions  ·  20 min  ·  no terminal
+O arquivo `arquivos-v2.json` lista exatamente o que deve ser copiado. O comando não remove sua pasta `.git` nem copia `node_modules`.
 
-Abra o terminal na pasta do projeto:
-
-```bash
-npm install -g firebase-tools
-firebase login
-firebase use portal-educador-academia-a1b2c
+```powershell
+$arquivosAcademia = Get-Content (Join-Path $novaAcademia 'arquivos-v2.json') -Raw | ConvertFrom-Json
+foreach ($arquivoAcademia in $arquivosAcademia) {
+    $origemAcademia = Join-Path $novaAcademia $arquivoAcademia
+    $destinoAcademia = Join-Path $repoAcademia $arquivoAcademia
+    New-Item -ItemType Directory -Force -Path (Split-Path $destinoAcademia -Parent) | Out-Null
+    Copy-Item -LiteralPath $origemAcademia -Destination $destinoAcademia -Force
+}
+Set-Location $repoAcademia
+git diff --stat
 ```
 
-Agora, **nesta ordem**:
+Se você ainda não tem uma cópia local do repositório, use o endereço real mostrado pelo botão **Code** no GitHub para cloná-lo primeiro. Não substitua o endereço do repositório por um exemplo inventado.
 
-```bash
-firebase deploy --only firestore:rules
-firebase deploy --only firestore:indexes
-firebase deploy --only storage
+Confira `.firebaserc` e o bloco `FIREBASE_CONFIG` dos três HTML. Eles mantêm os valores do arquivo recebido. Não altere o projeto se o site atual usa esses mesmos dados.
 
-cd functions
-npm install
-cd ..
-firebase deploy --only functions
+## 5. Verificar antes de publicar
+
+```powershell
+.\implantar.ps1 -Etapa Verificar
 ```
 
-O deploy das Functions demora alguns minutos na primeira vez e ativa APIs do Google Cloud
-automaticamente. Se ele pedir para habilitar alguma API, aceite.
+Essa etapa instala as dependências fixadas, verifica a sintaxe e executa os testes locais. Não publica nada.
 
-> **Confere:** no console, em **Functions**, devem aparecer seis:
-> `corrigirQuiz`, `emitirCertificado`, `revogarCertificado`, `definirPapel`, `obterGabarito`,
-> `relatorioAdesao` — todas em `southamerica-east1`.
->
-> Em **Firestore → Índices**, quatro índices devem estar como *Ativado*. Enquanto estiverem
-> "Criando", o catálogo abre vazio. Leva de 1 a 5 minutos.
+Se o Windows bloquear **o próprio implantar.ps1**, leia o script e libere apenas o arquivo baixado:
 
----
-
-## ETAPA 5 — Importar o conteúdo  ·  10 min
-
-No console: **Configurações do projeto → Contas de serviço → Gerar nova chave privada**.
-Salve o arquivo baixado como `scripts/chave-servico.json`.
-
-> Esse arquivo dá acesso total ao projeto. Nunca versione, nunca mande por WhatsApp.
-> Já está protegido no `.gitignore`.
-
-```bash
-cd scripts
-npm install firebase-admin
-node importar.mjs
+```powershell
+Unblock-File .\implantar.ps1
+.\implantar.ps1 -Etapa Verificar
 ```
 
-Deve listar os 10 cursos e as 4 trilhas. Confira no console, em **Firestore**, que a coleção
-`cursos` apareceu.
+Se a política corporativa ainda impedir scripts, execute manualmente os comandos equivalentes abaixo. Não altere a política da máquina:
 
----
-
-## ETAPA 6 — Criar o primeiro administrador  ·  5 min
-
-**Ordem importa aqui.**
-
-1. Abra o `index.html` no navegador (ainda local mesmo) e **entre com o Google**. É esse primeiro
-   login que cria sua conta no Firebase — antes dele, o passo seguinte não tem em quem aplicar.
-
-2. No terminal:
-
-```bash
-node definir-admin.mjs alan@newpc.com.br
+```powershell
+npm.cmd ci
+npm.cmd ci --prefix functions
+npm.cmd run check
+npm.cmd test
 ```
 
-3. **Saia da conta e entre de novo.** O papel viaja dentro do token de acesso, e o token só é
-   reemitido no login. Sem isso o painel continua dizendo que você não tem permissão.
+Teste adicional recomendado para a equipe técnica, com Java 17 ou superior instalado:
 
-4. Abra o `admin.html`. Os 10 cursos devem estar lá.
-
----
-
-## ETAPA 7 — Publicar no GitHub Pages  ·  15 min
-
-```bash
-cd ..                      # volte para a raiz do projeto
-git init
-git add .
-git commit -m "Academia do Educador 1.0"
-git branch -M main
-git remote add origin https://github.com/Newpc-Alan/academia-do-educador.git
-git push -u origin main
+```powershell
+java -version
+npm.cmd run test:emulator
 ```
 
-Se o repositório ainda não existe, crie em **github.com/new** com o nome `academia-do-educador`,
-**público**, sem README.
+Os testes usam **demo-academia** no emulador local; não gravam no seu projeto real. Os avisos `PERMISSION_DENIED` fazem parte dos testes de bloqueio; o resultado final deve mostrar todos os testes aprovados.
 
-No repositório: **Settings → Pages → Source: Deploy from a branch → main → / (root) → Save**.
+## 6. Publicar o Firebase
 
-### DNS
+```powershell
+.\implantar.ps1 -Etapa Firebase
+```
 
-No painel do domínio `portaldoeducador.com.br`, crie:
+O navegador abrirá para login. Entre com a conta que já administra o projeto. A ordem aplicada é:
 
-| Tipo | Nome | Valor |
-|---|---|---|
-| CNAME | `academia` | `newpc-alan.github.io` |
+1. Regras privadas do Firestore, índices e regras de arquivos.
+2. Cloud Functions atualizadas e novas funções.
+3. GitHub Pages, na etapa seguinte.
 
-Volte em **Settings → Pages**, digite `academia.portaldoeducador.com.br` em *Custom domain* e salve.
+Se preferir comandos manuais, após os testes:
 
-Aguarde o certificado SSL ser emitido (de 10 minutos a algumas horas) e então marque
-**Enforce HTTPS**.
+```powershell
+npx.cmd firebase login
+npx.cmd firebase deploy --project portal-educador-academia-a1b2c --only 'firestore:rules,firestore:indexes,storage'
+npx.cmd firebase deploy --project portal-educador-academia-a1b2c --only 'functions'
+```
 
----
+As aspas em `--only` são importantes no PowerShell quando há vírgulas.
 
-## ETAPA 8 — Ajustes finais  ·  10 min
+**Pare se qualquer comando falhar.** Não considere a implantação concluída apenas porque uma parte apareceu como concluída. Não execute os antigos scripts `importar.mjs` ou `conteudo-inicial.js`: eles são de instalação inicial, não desta atualização.
 
-### Download dos materiais — nada a fazer
+O projeto precisa ter faturamento e APIs necessários às Cloud Functions já habilitados. Acompanhe os custos no console: agora o acompanhamento de aula faz chamadas periódicas ao servidor. `maxInstances` limita concorrência, não é um teto de gastos.
 
-Cada tipo de arquivo já se comporta corretamente:
+## 7. Conferir no console.firebase.google.com
 
-- **PDF** abre no visualizador do navegador, onde o professor lê e salva com um clique
-- **DOCX, PPTX, XLSX** baixam automaticamente, porque o navegador não sabe exibi-los
+Abra o **mesmo projeto** e confira:
 
-> Forçar o download de PDF por código não é possível: o atributo `download` de um link é ignorado
-> quando o arquivo está em outro domínio, e o Firebase Storage é outro domínio. Isso é regra do
-> navegador, não configuração de servidor. A alternativa seria marcar todo material como anexo no
-> upload — mas aí o PDF deixaria de abrir para leitura, o que piora a experiência.
+- **Firestore → Regras:** em `certificados`, leitura permitida apenas para o titular e administrador; não pode existir `allow read: if true` nessa coleção.
+- **Firestore → Índices:** aguarde os índices terminarem de criar, se houver algum pendente.
+- **Functions:** devem existir as 14 funções abaixo, em São Paulo (`southamerica-east1`).
+- **Authentication → Configurações → Domínios autorizados:** mantenha o domínio usado pelo site e pelo login.
+- **Storage → Regras:** arquivos novos são aceitos nos tipos permitidos; sobrescrita e exclusão pelo navegador estão bloqueadas.
 
-### Indexação no Google
+Funções esperadas:
 
-Em **search.google.com/search-console**, adicione a propriedade
-`academia.portaldoeducador.com.br` e envie o sitemap `sitemap.xml`.
+```text
+iniciarAula
+acompanharAula
+sortearProva
+salvarRespostas
+corrigirQuiz
+emitirCertificado
+consultarCertificado
+revogarCertificado
+obterGabarito
+definirPapel
+publicarCurso
+duplicarCurso
+excluirCurso
+relatorioAdesao
+```
 
----
+A lista contém **14 funções**. Use os nomes como conferência; o número do painel pode incluir outras funções já existentes no projeto.
 
-## Checklist de aceite — só divulgue depois de passar em tudo
+Não cole trechos das regras antigas por cima das novas. Publique os arquivos completos do pacote.
 
-**Como professor**, em uma janela anônima:
+## 8. Publicar os arquivos no GitHub
 
-- [ ] `academia.portaldoeducador.com.br` abre com cadeado de HTTPS
-- [ ] Os 10 cursos aparecem no catálogo
-- [ ] Entrar com Google funciona
-- [ ] Entrar por link de e-mail funciona (o e-mail chega — confira o spam)
-- [ ] Uma aula abre, o vídeo toca, o material baixa
-- [ ] Marcar aula, fechar o navegador, entrar de outro aparelho: **o progresso continua lá**
-- [ ] A avaliação bloqueia antes de concluir o curso
-- [ ] Errar de propósito mostra a explicação
-- [ ] Emitir certificado exige CPF e recusa CPF inválido
-- [ ] O certificado sai com CNPJ, CPF, período e assinatura
-- [ ] O verso sai com o conteúdo programático
-- [ ] O QR Code do certificado abre a validação e mostra "autêntico"
-- [ ] Validar um código inventado retorna "não encontrado"
+Na pasta do repositório, revise e envie somente a lista da atualização:
 
-**Como equipe**, em `academia.portaldoeducador.com.br/admin.html`:
+```powershell
+Set-Location $repoAcademia
+git diff --stat
+$arquivosAcademia = Get-Content '.\arquivos-v2.json' -Raw | ConvertFrom-Json
+git add -- $arquivosAcademia
+git diff --cached --stat
+git commit -m 'Atualiza academia: seguranca, progresso, avaliacoes e interface'
+git push
+```
 
-- [ ] O painel abre para você e recusa quem não tem papel
-- [ ] Criar curso, módulo e aula funciona
-- [ ] Subir um PDF e um PPTX funciona
-- [ ] Adicionar dois vídeos na mesma aula funciona
-- [ ] Cadastrar questão e ela corrigir certo do lado do professor
+Se o branch ainda não tiver destino configurado, confira seu nome e publique esse mesmo branch:
 
-**Segurança**, uma vez, com o console do navegador aberto (F12):
+```powershell
+$ramoAcademia = git branch --show-current
+git push -u origin $ramoAcademia
+```
 
-- [ ] Tentar ler `cursos/{id}/gabarito` → deve dar permissão negada
-- [ ] Tentar criar documento em `certificados` → deve dar permissão negada
+No GitHub, acompanhe **Actions** até o deploy do Pages ficar verde. Em **Settings → Pages**, mantenha a origem de publicação que o site já usa. Não troque o branch sem necessidade. Se Pages usa outro branch/pasta ou um fluxo próprio, incorpore essa atualização à origem configurada antes de esperar mudanças no site.
 
-**No aparelho real:**
+Mantenha `CNAME` e `.nojekyll`. Os três HTML são autocontidos: não há CSS externo para subir junto.
 
-- [ ] Testar em um Chromebook de escola
-- [ ] Testar no celular com 4G fraco
+## 9. Testar o site publicado
 
----
+Use uma conta de professor de teste, sem papel administrativo:
 
-## Se der errado
+1. Recarregue com **Ctrl+F5** e entre na conta.
+2. Abra um curso, inicie uma aula e confira a mensagem de acompanhamento conectado.
+3. Em uma aula com vídeo, avance para o final: isso não deve concluir a aula. Assista de forma contínua; saltos e trechos repetidos não devem aumentar indevidamente o crédito.
+4. Em aula de texto, acompanhe o tempo mínimo. Navegar/rolar mantém o sinal de atividade; após inatividade, o tempo não deve continuar acumulando indefinidamente.
+5. Salve uma anotação, saia da aula e retorne.
+6. Conclua uma aula e recarregue: o progresso salvo precisa permanecer.
+7. Abra uma avaliação, responda parte, recarregue e confira as respostas recuperadas e o prazo.
+8. Envie a avaliação e confira a nota. Uma nova tentativa exige nova ação; repetir uma solicitação já corrigida não deve consumir outra tentativa.
+9. Emita um certificado e repita a emissão: o código deve ser o mesmo.
+10. Em uma janela anônima, consulte o código na página de validação. CPF completo e e-mail não devem aparecer na resposta da função.
+11. No admin, abra Publicação → Criar nova versão e confira que surgiu um rascunho independente. Não edite nem exclua o curso original para fazer esse teste.
+12. Confira desktop e celular, incluindo navegação, notas, lista de módulos e impressão do certificado. Esta revisão visual final não foi possível no navegador remoto da preparação.
 
-| Sintoma | Causa quase sempre | Solução |
-|---|---|---|
-| `auth/unauthorized-domain` | Domínio não autorizado | Etapa 2.2 — adicione o domínio |
-| Catálogo abre vazio, sem erro | Índices ainda criando | Espere 5 min e recarregue |
-| `The query requires an index` | Índices não publicados | `firebase deploy --only firestore:indexes` |
-| `permission-denied` ao ler cursos | Regras não publicadas | `firebase deploy --only firestore:rules` |
-| Painel diz que você não tem permissão | Token antigo | Saia e entre de novo |
-| `functions/not-found` ao corrigir quiz | Functions não publicadas ou região errada | `firebase deploy --only functions` |
-| Upload de material falha | Storage sem regras, ou papel não aplicado | `firebase deploy --only storage` e relogar |
-| Página do GitHub dá 404 | Pages ainda propagando | Espere 10 min |
-| HTTPS não aparece | Certificado do GitHub sendo emitido | Espere e então marque *Enforce HTTPS* |
+## 10. Falhas comuns
 
----
+| Sintoma | O que conferir |
+|---|---|
+| `node` não reconhecido | Instalação do Node 22 e reabertura do terminal |
+| `npm.ps1` bloqueado | Use `npm.cmd` e `npx.cmd` como nos exemplos |
+| `permission-denied` ao concluir aula | Confirme que publicou Functions e os HTML v2; a versão antiga não grava mais progresso diretamente |
+| Função não encontrada | Deploy incompleto, região incorreta ou HTML apontando para outro projeto |
+| Curso não publica | Confira duração de cada aula, módulos, conteúdo, vídeos, tamanho da prova e gabarito |
+| Botão de editar desabilitado | Curso já publicado: crie nova versão na aba Publicação |
+| Progresso ficou menor | A interface mostra aulas verificadas v2; histórico legado não foi apagado |
+| Vídeo não conclui | São necessários 90% dos trechos de cada vídeo e o tempo mínimo da aula; confira também a duração cadastrada |
+| Token de outra aba | Feche a segunda aba do mesmo curso e reabra a aula na aba desejada |
+| Certificado antigo não valida | Publique `consultarCertificado` e o novo `validar.html` |
+| Relatório parcial | Clique em carregar mais até aparecer “Todas as páginas”; CSV informa quando é parcial |
 
-## Depois de publicar
+## 11. Recuperação sem reabrir a exposição de dados
 
-O caminho crítico deixa de ser técnico e passa a ser de produção: **gravar os vídeos e escrever o
-banco de questões** dos 10 cursos. A plataforma está pronta esperando conteúdo.
+O backup Git permite recuperar o código anterior. Porém, **não restaure as regras públicas antigas dos certificados**. Se houver erro após o deploy, mantenha as novas regras privadas, restrinja temporariamente o uso da formação e corrija a parte que falhou. Voltar apenas os HTML antigos não restaura compatibilidade com o acompanhamento v2.
 
-Sugestão de sequência para não travar tudo de uma vez: publique primeiro **um** curso completo, com
-vídeo, material e avaliação. Use ele para validar a experiência com uns 5 professores de confiança.
-O que eles reclamarem, corrija antes de produzir os outros nove.
+Não apague coleções para “reiniciar”. Preserve o banco e os certificados. Uma reversão completa exige adaptação compatível das funções e da interface, mantendo a proteção dos dados.
+
+## Referências técnicas
+
+- [Implantação com Firebase CLI](https://firebase.google.com/docs/cli)
+- [Runtime Node.js das Functions](https://firebase.google.com/docs/functions/manage-functions)
+- [Transações do Firestore](https://firebase.google.com/docs/firestore/manage-data/transactions)
+- [Leitura por documento e separação de dados privados](https://firebase.google.com/docs/firestore/security/rules-fields)

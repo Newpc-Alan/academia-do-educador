@@ -772,6 +772,8 @@ const ApiDemo = {
   async lerCurso(id){ const c = DEMO.cursos[id]; return c ? { id, ...clonar(c) } : null; },
   async salvarCurso(id, dados){ DEMO.cursos[id] = { ...(DEMO.cursos[id]||{ modulos:{}, aulas:{}, questoes:{}, gabarito:{} }), ...dados }; },
   async excluirCurso(id){ delete DEMO.cursos[id]; },
+  async publicarCurso(id,status){ DEMO.cursos[id].status=status; },
+  async duplicarCurso(id){const novo=id+"-v"+Date.now();DEMO.cursos[novo]={...clonar(DEMO.cursos[id]),status:"rascunho",publicadoEm:undefined,historicoPublicado:false};return {id:novo};},
   async salvarModulo(cid, mid, d){ DEMO.cursos[cid].modulos[mid] = d; },
   async excluirModulo(cid, mid){
     delete DEMO.cursos[cid].modulos[mid];
@@ -864,14 +866,9 @@ const ApiFirebase = {
     const { doc, setDoc, serverTimestamp } = fb.fs;
     await setDoc(doc(fb.db,"cursos",id), { ...dados, atualizadoEm:serverTimestamp() }, { merge:true });
   },
-  async excluirCurso(id){
-    const { doc, deleteDoc, collection, getDocs } = fb.fs;
-    for (const sub of ["modulos","aulas","questoes","gabarito"]){
-      const s = await getDocs(collection(fb.db,"cursos",id,sub));
-      await Promise.all(s.docs.map(d=>deleteDoc(d.ref)));
-    }
-    await deleteDoc(doc(fb.db,"cursos",id));
-  },
+  async excluirCurso(id){ return this.chamar("excluirCurso",{cursoId:id}); },
+  async publicarCurso(id,status){ return this.chamar("publicarCurso",{cursoId:id,status}); },
+  async duplicarCurso(id){ return this.chamar("duplicarCurso",{cursoId:id}); },
   async salvarModulo(cid, mid, d){ const {doc,setDoc}=fb.fs; await setDoc(doc(fb.db,"cursos",cid,"modulos",mid), d, {merge:true}); },
   async excluirModulo(cid, mid){
     const { doc, deleteDoc, collection, getDocs, query, where } = fb.fs;
@@ -882,14 +879,14 @@ const ApiFirebase = {
   async salvarAula(cid, aid, d){ const {doc,setDoc}=fb.fs; await setDoc(doc(fb.db,"cursos",cid,"aulas",aid), d, {merge:true}); },
   async excluirAula(cid, aid){ const {doc,deleteDoc}=fb.fs; await deleteDoc(doc(fb.db,"cursos",cid,"aulas",aid)); },
   async salvarQuestao(cid, qid, q, g){
-    const {doc,setDoc}=fb.fs;
-    await setDoc(doc(fb.db,"cursos",cid,"questoes",qid), q, {merge:true});
-    await setDoc(doc(fb.db,"cursos",cid,"gabarito",qid), g, {merge:true});
+    const {doc,writeBatch}=fb.fs;const batch=writeBatch(fb.db);
+    batch.set(doc(fb.db,"cursos",cid,"questoes",qid),q,{merge:true});
+    batch.set(doc(fb.db,"cursos",cid,"gabarito",qid),g,{merge:true});await batch.commit();
   },
   async excluirQuestao(cid, qid){
-    const {doc,deleteDoc}=fb.fs;
-    await deleteDoc(doc(fb.db,"cursos",cid,"questoes",qid));
-    await deleteDoc(doc(fb.db,"cursos",cid,"gabarito",qid));
+    const {doc,writeBatch}=fb.fs;const batch=writeBatch(fb.db);
+    batch.delete(doc(fb.db,"cursos",cid,"questoes",qid));
+    batch.delete(doc(fb.db,"cursos",cid,"gabarito",qid));await batch.commit();
   },
   async obterGabarito(cid){ return (await this.chamar("obterGabarito",{ cursoId:cid })).gabarito; },
 
@@ -908,13 +905,17 @@ const ApiFirebase = {
   async excluirArquivo(path){
     if (!path) return;
     const { ref, deleteObject } = fb.st;
-    try { await deleteObject(ref(fb.bucket, path)); } catch(e){ console.warn("Arquivo já removido:", path); }
+    // Arquivos são imutáveis por regra do Storage, para que um certificado já
+    // emitido continue apontando para o material que existia na época. Aqui só
+    // some o vínculo com a aula; o arquivo continua guardado no servidor.
+    return;
   },
 
   async enviarCapa(cid, file){
     const { ref, uploadBytes, getDownloadURL } = fb.st;
-    // Nome fixo por curso: trocar a capa sobrescreve a anterior em vez de acumular
-    const caminho = `capas/${cid}.${file.name.split(".").pop()}`;
+    // Nome novo a cada envio: os arquivos são imutáveis por regra do Storage,
+    // então trocar a capa grava outra e a anterior fica guardada.
+    const caminho = `capas/${cid}-${Date.now()}.${file.name.split(".").pop()}`;
     const r = ref(fb.bucket, caminho);
     await uploadBytes(r, file, { contentType:file.type, cacheControl:"public,max-age=604800" });
     return { url: await getDownloadURL(r), path: caminho };
@@ -938,7 +939,7 @@ const ApiFirebase = {
   async buscarCertificados(termo){
     const { collection, getDocs, query, where, limit, doc, getDoc } = fb.fs;
     const t = (termo||"").trim();
-    if (/^AE-\d{4}-[A-Z0-9]{6}$/i.test(t)){
+    if (/^AE-\d{4}-(?:[A-Z0-9]{6}|[A-F0-9]{12})$/i.test(t)){
       const d = await getDoc(doc(fb.db,"certificados",t.toUpperCase()));
       return d.exists() ? [{ codigo:d.id, ...d.data() }] : [];
     }
@@ -946,7 +947,7 @@ const ApiFirebase = {
     return s.docs.map(d=>({ codigo:d.id, ...d.data() }));
   },
   async revogarCertificado(codigo, motivo){ return this.chamar("revogarCertificado",{ codigo, motivo }); },
-  async relatorioAdesao(municipio){ return this.chamar("relatorioAdesao",{ municipio }); },
+  async relatorioAdesao(municipio,cursor){ return this.chamar("relatorioAdesao",{ municipio,...(cursor?{cursor}:{}) }); },
 
   async entrar(){
     const p = new fb.auth.GoogleAuthProvider();
@@ -1296,8 +1297,8 @@ T.curso_publicar = async id => {
     ["Pelo menos 1 módulo",         nModulos > 0],
     ["Pelo menos 1 aula",           nAulas > 0],
     ["Todas as aulas com vídeo ou texto", nAulas > 0 && Object.values(c.aulas||{}).every(a=>a.videos?.length || (a.texto||"").trim())],
-    ["Vinculado a alguma trilha",   (c.trilhas||[]).length > 0],
-    ...(c.quizAtivo ? [["Avaliação com no mínimo 3 questões", nQuest >= 3]] : [])
+    ["Duração definida em todas as aulas", Object.values(c.aulas||{}).every(a=>Number(a.duracaoMin)>0)],
+    ...(c.quizAtivo ? [["Banco suficiente para o tamanho da prova", nQuest >= Math.max(3,Number(c.quizPorProva ?? 10))]] : [])
   ];
   const tudoOk = itens.every(([,ok])=>ok);
 
@@ -1305,6 +1306,7 @@ T.curso_publicar = async id => {
   <p style="font-size:.86rem;color:var(--suave);margin-bottom:.3rem"><a href="#/cursos" style="text-decoration:none">← Cursos</a></p>
   <h1>${esc(c.titulo)}</h1>
   ${abasCurso(id,"publicar")}
+  <div class="cartao"><h2>Nova versão do curso</h2><p>Crie uma cópia editável. A versão atual, o progresso dos alunos e os certificados permanecem vinculados ao curso original.</p><button class="btn b-primario" id="duplicarCurso">Criar nova versão</button></div>
   <div id="msg"></div>
 
   <div class="cartao">
@@ -1322,7 +1324,7 @@ T.curso_publicar = async id => {
         <tr><td style="width:34px;font-size:1.1rem;color:${ok?"var(--verde)":"var(--suave)"}">${ok?"✓":"○"}</td><td>${txt}</td></tr>`).join("")}
       </tbody>
     </table>
-    ${tudoOk ? '' : '<div class="aviso a-atencao" style="margin-top:14px"><span>Você pode publicar mesmo com pendências, mas cada item acima é algo que o professor vai sentir falta.</span></div>'}
+    ${tudoOk ? '' : '<div class="aviso a-atencao" style="margin-top:14px"><span>Corrija as pendências antes de publicar. O servidor também confere módulos, vídeos, alternativas e gabaritos.</span></div>'}
   </div>
 
   <div class="cartao">
@@ -1331,7 +1333,7 @@ T.curso_publicar = async id => {
       <div class="l-auto">
         <button class="btn b-neutro" data-status="rascunho"  ${c.status==="rascunho"?"disabled":""}>Voltar para rascunho</button>
         <button class="btn b-neutro" data-status="revisao"   ${c.status==="revisao"?"disabled":""}>Enviar para revisão</button>
-        <button class="btn b-primario" data-status="publicado" ${c.status==="publicado"?"disabled":""}>Publicar curso</button>
+        <button class="btn b-primario" data-status="publicado" ${c.status==="publicado"||!tudoOk?"disabled":""}>Publicar curso</button>
       </div>
       <p class="ajuda" style="margin-top:.7rem">Publicar torna o curso visível para todos os professores imediatamente.</p>
     ` : `
@@ -1494,7 +1496,7 @@ T.processo = async () => `
   </div>
 
   <div class="aviso a-atencao">
-    <span><b>Uma regra que evita dor de cabeça</b>Depois que um curso está publicado, acrescente aulas no fim dos módulos. Excluir aula de curso em andamento recalcula o percentual de quem já estava fazendo.</span>
+    <span><b>Uma regra que evita dor de cabeça</b>Depois que um curso está publicado, use Criar nova versão para editar uma cópia. O conteúdo da versão original fica protegido.</span>
   </div>`;
 
 T.naoEncontrado = (msg) => `<div class="vazio"><h1>Não encontrado</h1><p>${esc(msg||"O item acessado não existe.")}</p><a class="btn b-primario" href="#/cursos">Voltar aos cursos</a></div>`;
@@ -1533,7 +1535,14 @@ async function renderizar(){
     const base = a.getAttribute("href").replace("#/","");
     a.setAttribute("aria-current", (base===r || (base==="cursos" && (r==="curso"||r==="aula"))) ? "page" : "false");
   });
-  depois?.();
+  await depois?.();
+  if(["curso","aula"].includes(r) && cursoAberto && (cursoAberto.status==="publicado" || cursoAberto.publicadoEm || cursoAberto.historicoPublicado)){
+    const aviso=document.createElement("div");aviso.className="aviso a-info";
+    aviso.innerHTML='<span>Esta versão tem histórico de publicação e está protegida contra alterações. Para editar, abra a aba Publicação e use <b>Criar nova versão</b>.</span>';
+    tela.prepend(aviso);
+    // As regras do servidor são a proteção efetiva; aqui apenas explicamos o estado.
+    if(!location.hash.endsWith("/publicar"))tela.querySelectorAll("input,textarea,select,button,[contenteditable]").forEach(el=>{el.disabled=true;if(el.hasAttribute("contenteditable"))el.contentEditable="false";});
+  }
   window.scrollTo({ top:0, behavior:"instant" });
 }
 
@@ -1714,7 +1723,7 @@ function ligarAula(cursoId, aulaId){
     : '<p style="color:var(--suave);font-size:.88rem;margin:0">Nenhum material nesta aula.</p>';
     $$("[data-rmm]").forEach(b=>b.addEventListener("click", async ()=>{
       const i = Number(b.dataset.rmm);
-      if (!confirm(`Remover "${materiais[i].titulo}"?`)) return;
+      if (!confirm(`Remover "${materiais[i].titulo}" desta aula?\n\nO vínculo sai da aula agora. O arquivo continua guardado no servidor, porque certificados já emitidos podem apontar para ele.`)) return;
       await Api.excluirArquivo(materiais[i].path);
       materiais.splice(i,1); pintarMateriais();
     }));
@@ -1780,16 +1789,14 @@ function ligarAula(cursoId, aulaId){
 }
 
 /* ---------- AVALIAÇÃO ---------- */
-function ligarAvaliacao(id){
+async function ligarAvaliacao(id){
   const c = cursoAberto;
   let questoes = Object.entries(c.questoes||{}).sort((a,b)=>(a[1].ordem||0)-(b[1].ordem||0));
   let gabarito = {};
 
-  (async ()=>{
-    try { gabarito = await Api.obterGabarito(id); }
-    catch(e){ console.warn("Gabarito indisponível:", e.message); }
-    pintar();
-  })();
+  try { gabarito = await Api.obterGabarito(id); }
+  catch(e){ avisar("Não foi possível carregar o gabarito. Reabra a avaliação antes de editar.","erro");return; }
+  pintar();
 
   /* Sorteio com banco pequeno é sorteio de mentira: se o curso pede 10 questões
      e o banco tem 11, todo mundo faz praticamente a mesma prova. Este aviso
@@ -1895,21 +1902,23 @@ function ligarAvaliacao(id){
 
 /* ---------- PUBLICAÇÃO ---------- */
 function ligarPublicar(id){
-  $$("[data-status]").forEach(b=>b.addEventListener("click", async ()=>{
-    const novo = b.dataset.status;
-    if (novo === "publicado" && !confirm("Publicar este curso? Ele ficará visível para todos os professores.")) return;
-    await Api.salvarCurso(id, { status:novo, ...(novo==="publicado" ? { publicadoEm:new Date().toISOString() } : {}) });
-    cursoAberto = null;
-    await renderizar();
-    avisar(`Situação alterada para "${STATUS[novo]}".`,"ok");
+  $("#duplicarCurso")?.addEventListener("click",async e=>{
+    e.target.disabled=true;
+    try{const r=await Api.duplicarCurso(id);cursoAberto=null;location.hash="#/curso/"+r.id+"/dados";}
+    catch(err){avisar(err.message||"Não foi possível criar a cópia.","erro");e.target.disabled=false;}
+  });
+  $$("[data-status]").forEach(b=>b.addEventListener("click",async()=>{
+    const novo=b.dataset.status;
+    if(novo==="publicado"&&!confirm("Publicar este curso após validar o conteúdo?"))return;
+    if(novo!=="publicado"&&!confirm("Alterar a situação pode retirar o curso do acesso dos alunos. Para revisar conteúdo, prefira criar uma nova versão. Continuar?"))return;
+    b.disabled=true;
+    try{await Api.publicarCurso(id,novo);cursoAberto=null;await renderizar();avisar("Situação atualizada.","ok");}
+    catch(e){avisar(e.message||"Não foi possível alterar a situação.","erro");b.disabled=false;}
   }));
-
-  $("#excluirCurso")?.addEventListener("click", async ()=>{
-    if (!confirm("Excluir este curso e todo o seu conteúdo? Não há como desfazer.")) return;
-    if (prompt('Digite EXCLUIR para confirmar:') !== "EXCLUIR") return;
-    await Api.excluirCurso(id);
-    cursoAberto = null;
-    location.hash = "#/cursos";
+  $("#excluirCurso")?.addEventListener("click",async()=>{
+    if(prompt('Digite EXCLUIR para apagar este rascunho:')!=="EXCLUIR")return;
+    try{await Api.excluirCurso(id);cursoAberto=null;location.hash="#/cursos";}
+    catch(e){avisar(e.message||"Não foi possível excluir.","erro");}
   });
 }
 
@@ -1931,7 +1940,7 @@ function ligarTrilhas(){
     await Api.salvarTrilha(id, {
       nome, resumo, cursos, horas,
       ordem: t?.ordem || S.trilhas.length+1,
-      status: t?.status || "publicado"
+      status: t?.status || (podePublicar()?"publicado":"rascunho")
     });
     await renderizar();
     avisar("Trilha salva.","ok");
@@ -1996,34 +2005,45 @@ function ligarEquipe(){
 
 /* ---------- RELATÓRIO ---------- */
 function ligarRelatorio(){
+  let acumuladas=[],cursor=null,filtro="";
   $("#btnRel")?.addEventListener("click", async ()=>{
+    acumuladas=[];cursor=null;filtro=$("#relMunicipio").value.trim();await carregarPagina();
+  });
+  async function carregarPagina(){
+    $("#btnRel").disabled=true;
     const alvo = $("#resRel");
     alvo.innerHTML = '<p style="color:var(--suave)">Gerando…</p>';
     try {
-      const r = await Api.relatorioAdesao($("#relMunicipio").value.trim());
+      const pagina=await Api.relatorioAdesao(filtro,cursor);
+      acumuladas.push(...pagina.linhas);cursor=pagina.proximoCursor;
+      const r={linhas:acumuladas,totalProfessores:acumuladas.length,totalCertificados:acumuladas.reduce((n,l)=>n+l.certificados,0),totalHoras:acumuladas.reduce((n,l)=>n+l.horasCertificadas,0)};
       alvo.innerHTML = `
         <div class="linha l3">
           <div class="cartao" style="box-shadow:none"><b style="font-size:1.8rem;color:var(--azul)">${r.totalProfessores}</b><br><span style="color:var(--suave);font-size:.86rem">professores</span></div>
           <div class="cartao" style="box-shadow:none;margin:0"><b style="font-size:1.8rem;color:var(--verde)">${r.totalCertificados}</b><br><span style="color:var(--suave);font-size:.86rem">certificados</span></div>
           <div class="cartao" style="box-shadow:none;margin:0"><b style="font-size:1.8rem;color:var(--azul)">${r.totalHoras}h</b><br><span style="color:var(--suave);font-size:.86rem">horas certificadas</span></div>
         </div>
-        <button class="btn b-neutro" id="csv">Exportar CSV</button>
+        <p>${cursor?"Resultado parcial. Carregue as próximas páginas para completar o relatório.":"Todas as páginas deste filtro foram carregadas."} Certificados revogados não entram nos totais. Conclusões anteriores à atualização só entram após revalidação; certificados antigos válidos continuam contados.</p>
+        ${cursor?'<button class="btn b-primario" id="maisRel">Carregar mais 100 professores</button>':''}
+        <button class="btn b-neutro" id="csv">Exportar CSV ${cursor?"parcial":"completo"}</button>
         ${r.linhas.length ? `<div style="overflow-x:auto;margin-top:14px"><table>
           <thead><tr><th>Nome</th><th>Escola</th><th>Função</th><th>Iniciados</th><th>Concluídos</th><th>Certificados</th><th>Horas</th></tr></thead>
           <tbody>${r.linhas.map(l=>`<tr><td>${esc(l.nome)}</td><td>${esc(l.escola)}</td><td>${esc(l.cargo)}</td><td>${l.cursosIniciados}</td><td>${l.cursosConcluidos}</td><td>${l.certificados}</td><td>${l.horasCertificadas}</td></tr>`).join("")}</tbody>
         </table></div>` : '<p style="color:var(--suave);margin-top:14px">Nenhum professor encontrado para esse filtro.</p>'}`;
 
+      $("#maisRel")?.addEventListener("click",carregarPagina);
       $("#csv")?.addEventListener("click", ()=>{
         const cab = ["Nome","E-mail","Municipio","Escola","Funcao","Cursos iniciados","Cursos concluidos","Certificados","Horas certificadas"];
         const linhas = r.linhas.map(l=>[l.nome,l.email,l.municipio,l.escola,l.cargo,l.cursosIniciados,l.cursosConcluidos,l.certificados,l.horasCertificadas]);
-        const csv = [cab, ...linhas].map(l=>l.map(v=>`"${String(v??"").replace(/"/g,'""')}"`).join(";")).join("\n");
+        const csv = [cab, ...linhas].map(l=>l.map(v=>`"${String(v??"").replace(/^[=+@\-\t\r]/,"' $&").replace(/"/g,'""')}"`).join(";")).join("\n");
         const a = document.createElement("a");
         a.href = URL.createObjectURL(new Blob(["﻿"+csv], { type:"text/csv;charset=utf-8" }));
         a.download = `adesao-${($("#relMunicipio").value.trim()||"geral").replace(/\W+/g,"-")}.csv`;
         a.click();
       });
     } catch(e){ alvo.innerHTML = `<div class="aviso a-erro"><span>${esc(e.message)}</span></div>`; }
-  });
+    finally{$("#btnRel").disabled=false;}
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -2065,6 +2085,8 @@ async function entrar(){
 
 $("#btnSair")?.addEventListener("click", ()=>Api.sair());
 window.addEventListener("hashchange", ()=>{ if (podeEditar()) renderizar(); });
+
+window.addEventListener("unhandledrejection",ev=>{console.error(ev.reason);avisar(ev.reason?.message||"Não foi possível salvar. Confira a conexão e tente novamente.","erro");});
 
 (async function arrancar(){
   try {

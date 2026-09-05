@@ -679,6 +679,40 @@ footer.rodape a:hover{text-decoration:underline}
   flex-shrink: 0;
 }
 </style>
+<style>
+/* Antes em styles-v2.css. Embutido para manter o arquivo autocontido:
+   um arquivo a menos para o navegador buscar e um a menos para ficar em cache
+   desatualizado depois de um deploy. */
+/* Academia v2: padrão visual de estudo, sem alterar impressão do certificado. */
+:root{--azul:#0f2c4a;--verde:#0f9861;--foco:#087fa8}
+:focus-visible{outline:3px solid var(--foco);outline-offset:4px}
+@media screen {
+body{background:#f4f7fa}
+.bloco>.container{max-width:1280px}
+.painel,.cartao-curso,.indice{border-radius:16px;box-shadow:0 5px 24px #0f2c4a08}
+.btn{min-height:44px;border-radius:10px;transition:background .16s,box-shadow .16s}
+.btn-primario{background:#0f2c4a;border-color:#0f2c4a}
+.btn-primario:hover{background:#154367}
+.btn:disabled{cursor:wait;opacity:.65}
+.player{border-radius:16px;background:#081929;box-shadow:0 10px 28px #0f2c4a20;overflow:hidden}
+.aula-moldura{grid-template-columns:minmax(0,1fr) 310px;gap:32px;align-items:start}
+.aula-moldura>div,.aula-moldura aside{min-width:0}
+.rico{max-width:76ch;line-height:1.85}
+.rico img{max-width:100%;height:auto}
+.faixa-progresso{border:1px solid #dce6ed;border-radius:12px;padding:16px;background:white}
+.estado-salvo{font-size:.88rem;color:#315466;padding:12px 15px;background:#e9f3f8;border-radius:10px;line-height:1.6}
+.prazo-prova{font-weight:700;color:#0f2c4a;position:sticky;top:76px;background:#f4f7fa;padding:10px 0;z-index:2}
+.notas-aula summary,.modulos-mobile>summary{font-weight:700;cursor:pointer;color:#0f2c4a;padding:12px 0}
+.modulos-mobile>summary{padding:16px}
+.notas-aula label{display:block;margin:16px 0 8px;font-size:.9rem}
+.notas-aula textarea{display:block;box-sizing:border-box;width:100%;font:inherit;line-height:1.6;padding:14px;border:1px solid #bbcdd9;border-radius:10px;margin-bottom:12px;resize:vertical;background:white;color:#172c3f}
+.notas-aula p{font-size:.85rem;color:#466070}
+.conclusao{padding:22px;border-radius:14px}
+@media(max-width:980px){.aula-moldura{grid-template-columns:minmax(0,1fr)}.aula-moldura aside{grid-row:1}.aula-moldura .indice{position:static!important;max-height:none!important}.modulos-mobile[open]{max-height:45vh;overflow:auto}}
+@media(max-width:600px){.aula-moldura{gap:18px}.conclusao{padding:16px}.conclusao .btn{width:100%;white-space:normal}.nav-aula{flex-wrap:wrap}.player{border-radius:10px}.estado-salvo{font-size:.82rem}.prazo-prova{top:64px}.btn{white-space:normal}.painel{padding:18px}}
+}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation-duration:.01ms!important;transition:none!important}}
+</style>
 </head>
 <body>
 
@@ -1217,14 +1251,16 @@ const DadosFirebase = {
 
     await this.carregarCatalogo();
 
-    return new Promise(resolve=>{
+    return new Promise((resolve,reject)=>{
       auth.onAuthStateChanged(fb._auth, async u=>{
+        try {
         E.usuario = u;
         if (u) await this.carregarUsuario(u.uid);
         else { E.perfil = {}; E.progresso = {}; E.tentativas = {}; E.certificados = []; }
         E.pronto = true;
         resolve();
         renderizar(); atualizarBotaoConta();
+        } catch(e){ reject(e); toque("Não foi possível carregar sua conta. Recarregue a página para tentar novamente."); }
       });
     });
   },
@@ -1265,11 +1301,11 @@ const DadosFirebase = {
     const { doc, getDoc, setDoc, collection, getDocs, query, where, serverTimestamp } = fb.fs;
     const ref = doc(fb.db,"users",uid);
     const s = await getDoc(ref);
+    const u = E.usuario || {};
     if (s.exists()){
       E.perfil = s.data();
-      await setDoc(ref, { ultimoAcesso:serverTimestamp() }, { merge:true });
+      await setDoc(ref, { email:u.email||"", ultimoAcesso:serverTimestamp() }, { merge:true });
     } else {
-      const u = E.usuario;
       E.perfil = { nome:u.displayName||"", email:u.email||"", fotoURL:u.photoURL||"",
                    municipio:"", escola:"", cargo:"", aceiteTermos:VERSAO_TERMOS,
                    criadoEm:serverTimestamp(), ultimoAcesso:serverTimestamp() };
@@ -1287,25 +1323,22 @@ const DadosFirebase = {
     E.certificados.sort((a,b)=>(b.emitidoEmISO||"").localeCompare(a.emitidoEmISO||""));
   },
 
-  /* `marcouAula` diz se esta gravação está concluindo uma aula. Só nesse caso o
-     carimbo `ultimaConclusaoEm` é renovado, e é esse carimbo que a regra do
-     Firestore usa para exigir o intervalo mínimo entre uma conclusão e a
-     seguinte. Gravações de vídeo assistido passam com o carimbo intacto. */
-  async salvarProgresso(cursoId, dados, marcouAula = false){
-    E.progresso[cursoId] = dados;
-    if (!E.usuario) return;
-    const { doc, setDoc, serverTimestamp } = fb.fs;
-    const payload = { ...dados, atualizadoEm:serverTimestamp() };
-    if (marcouAula) payload.ultimaConclusaoEm = serverTimestamp();
-    else            delete payload.ultimaConclusaoEm;
-    await setDoc(doc(fb.db,"users",E.usuario.uid,"progresso",cursoId), payload, { merge:true });
+  iniciarAula(cursoId,aulaId){ return this.chamar("iniciarAula",{cursoId,aulaId}); },
+  acompanharAula(dados){ return this.chamar("acompanharAula",dados); },
+  salvarRespostas(provaId,respostas){ return this.chamar("salvarRespostas",{provaId,respostas}); },
+  async lerAnotacao(chave){
+    const d=await fb.fs.getDoc(fb.fs.doc(fb.db,"users",E.usuario.uid,"anotacoes",chave));
+    return d.exists()?d.data().texto:"";
+  },
+  async salvarAnotacao(chave,texto){
+    await fb.fs.setDoc(fb.fs.doc(fb.db,"users",E.usuario.uid,"anotacoes",chave),{texto,atualizadoEm:fb.fs.serverTimestamp()});
   },
 
   async salvarPerfil(p){
-    E.perfil = { ...E.perfil, ...p };
-    if (!E.usuario) return;
+    if (!E.usuario) throw new Error("Entre na sua conta para salvar seus dados.");
     const { doc, setDoc } = fb.fs;
     await setDoc(doc(fb.db,"users",E.usuario.uid), p, { merge:true });
+    E.perfil = { ...E.perfil, ...p };
   },
 
   async corrigirQuiz(provaId, cursoId, respostas){
@@ -1506,7 +1539,7 @@ function montarPrograma(c){
 
 function progressoDe(cursoId, totalAulas){
   const p = E.progresso[cursoId] || {};
-  const feitas = p.aulas || [];
+  const feitas = MODO_DEMO ? (p.aulas || []) : (p.aulasVerificadas || []);
   const total = totalAulas ?? (curso(cursoId)?.totalAulas || 0);
   const pct = total ? Math.round(feitas.length/total*100) : 0;
   return { feitas, total, pct, concluido: total>0 && feitas.length >= total };
@@ -1609,17 +1642,17 @@ T.inicio = async () => {
   // Curso mais adiantado ainda em aberto: é o que o professor quer retomar.
   const retomar = E.cursos
     .map(c => ({ c, p: progressoDe(c.id) }))
-    .filter(x => x.p.pct > 0 && !x.p.concluido)
-    .sort((a,b) => b.p.pct - a.p.pct)[0];
+    .filter(x => (x.p.pct > 0 || E.progresso[x.c.id]?.ultimaAula) && !x.p.concluido)
+    .sort((a,b) => (E.progresso[b.c.id]?.ultimoAcessoISO||"" ).localeCompare(E.progresso[a.c.id]?.ultimoAcessoISO||"") || b.p.pct-a.p.pct)[0];
 
   return `
   <section class="hero">
     <div class="container">
       <span class="selo">100% online · gratuito · com certificado</span>
-      <h1>Formação continuada para quem dá aula todo dia</h1>
-      <p class="lead">Aulas curtas, material pronto para levar para a sala e certificado com código de validação. Gratuito para professor de rede pública.</p>
+      <h1>${E.usuario?`Olá, ${esc((E.perfil.nome||"professor").split(" ")[0])}. Vamos continuar?`:"Formação continuada para quem dá aula todo dia"}</h1>
+      <p class="lead">${E.usuario?"Seu espaço de formação: retome suas aulas, acompanhe suas conquistas e leve novas ideias para a escola.":"Aulas curtas, material pronto para levar para a sala e certificado com código de validação. Gratuito para professor de rede pública."}</p>
       <div class="hero-cta">
-        <a class="btn btn-primario" href="#/cursos">Explorar cursos</a>
+        ${E.usuario?'<a class="btn btn-primario" href="#/progresso">Meus cursos</a>':'<a class="btn btn-primario" href="#/cursos">Explorar cursos</a>'}
         <a class="btn btn-secundario" href="#/trilhas">Ver trilhas formativas</a>
       </div>
       <div class="metricas">
@@ -1642,7 +1675,7 @@ T.inicio = async () => {
           ${retomar.p.feitas.length} de ${retomar.p.total} aulas concluídas
         </p>
       </div>
-      <a class="btn btn-primario" href="#/curso/${retomar.c.id}">Retomar o curso →</a>
+      <a class="btn btn-primario" href="${E.progresso[retomar.c.id]?.ultimaAula?`#/aula/${retomar.c.id}/${esc(E.progresso[retomar.c.id].ultimaAula)}`:`#/curso/${retomar.c.id}`}">Continuar estudando →</a>
     </div>
   </section>` : ''}
 
@@ -1873,6 +1906,7 @@ T.curso = async id => {
             <button class="btn btn-secundario btn-bloco" data-login="1">Entrar na conta</button>` : ''}
 
           ${MODO_DEMO ? '<div class="aviso aviso-info" style="margin-top:1rem"><span><b>Modo demonstração</b>Catálogo de exemplo, progresso apenas neste navegador.</span></div>' : ''}
+          ${!MODO_DEMO && E.progresso[id]?.aulas?.length && !E.progresso[id]?.progressoVersao ? '<div class="aviso aviso-info"><span>Atualizamos o acompanhamento. Para uma nova certificação, revise as aulas com o registro atualizado. Certificados já emitidos permanecem disponíveis.</span></div>' : ''}
           <div id="msgCurso" style="margin-top:12px"></div>
         </div>
       </aside>
@@ -1980,7 +2014,7 @@ T.aula = async (cursoId, aulaId) => {
         ${materiais.length ? `<div class="painel">
           <h2 style="font-size:1.15rem">Materiais desta aula</h2>
           ${materiais.map(m=>`
-            <a class="material" href="${esc(m.url||'#')}" ${m.url&&m.url!=='#'?'target="_blank" rel="noopener" download':''}>
+            <a class="material" href="${esc(urlSegura(m.url))}" ${m.url&&m.url!=='#'?'target="_blank" rel="noopener" download':''}>
               <span class="tipo ${esc(m.tipo||'')}">${esc((m.tipo||'arq').toUpperCase().slice(0,4))}</span>
               <span style="flex:1"><b>${esc(m.titulo)}</b><span>${m.bytes?tamanho(m.bytes):'Clique para abrir'}</span></span>
               <span style="color:var(--verde);font-weight:700">↓</span>
@@ -1990,18 +2024,26 @@ T.aula = async (cursoId, aulaId) => {
         ${!videos.length && !a.texto && !materiais.length
           ? '<div class="aviso aviso-info"><span>O conteúdo desta aula ainda está sendo preparado.</span></div>' : ''}
 
+        <div class="painel notas-aula">
+          <details><summary>Minhas anotações</summary>
+          <label for="anotacaoAula">Registre ideias para aplicar na sua escola</label>
+          <textarea id="anotacaoAula" maxlength="12000" rows="5" placeholder="O que você quer levar desta aula para sua prática?" disabled></textarea>
+          <button class="btn btn-secundario" id="salvarAnotacao" type="button" disabled>Salvar anotações</button>
+          <p id="estadoAnotacao" role="status" aria-live="polite">Carregando…</p></details>
+        </div>
+        <p id="estadoProgresso" class="estado-salvo" role="status" aria-live="polite">${MODO_DEMO?'Demonstração: progresso local.':'Conectando ao acompanhamento da aula…'}</p>
         <div class="conclusao ${feita?'feita':''}" id="blocoConclusao"
              data-destino="${destino}" data-seguir="${esc(rotuloSeguir)}">
           ${feita
             ? `<div class="txt">
                  <strong>✓ Aula concluída</strong>
-                 <button class="desfazer" id="desfazerAula" type="button">desmarcar esta aula</button>
+                 <span>Progresso confirmado. Você pode rever a aula quando quiser.</span>
                </div>
                <a class="btn btn-primario" href="${destino}">${rotuloSeguir}</a>`
             : `<div class="txt">
                  <strong>Terminou esta aula?</strong>
                  <span>${videos.length
-                   ? 'Ela é marcada sozinha quando você assiste ao vídeo até o fim.'
+                   ? 'Assista a pelo menos 90% de cada vídeo. Saltos não contam como tempo assistido.'
                    : 'Concluir as aulas é o que libera o próximo módulo, a avaliação e o certificado.'}</span>
                </div>
                <button class="btn btn-primario" id="concluirAula" type="button"
@@ -2018,12 +2060,14 @@ T.aula = async (cursoId, aulaId) => {
 
       <aside>
         <div class="indice" style="position:sticky;top:96px;max-height:calc(100vh - 120px);overflow-y:auto">
+          <details class="modulos-mobile" open><summary>Conteúdo do curso</summary>
           <h3>${esc(c.titulo)}</h3>
           <div style="padding:.7rem 1.05rem">
             <div class="barra-rotulo"><span>${p.feitas.length}/${aulas.length}</span><span>${p.pct}%</span></div>
             <div class="barra"><i style="width:${p.pct}%"></i></div>
           </div>
           ${indice}
+          </details>
         </div>
       </aside>
     </div>
@@ -2095,6 +2139,7 @@ T.avaliacao = async cursoId => {
     </div></section>`;
   }
 
+  E.provaAtual = prova;
   const questoes = prova.questoes || [];
   const LETRAS = "ABCDEFGH";
 
@@ -2106,14 +2151,15 @@ T.avaliacao = async cursoId => {
     </p>
 
     <div class="aviso aviso-info"><span><b>Como esta prova foi montada</b>
-      As questões foram sorteadas do banco do curso e as alternativas vêm em ordem
-      embaralhada, diferente da de qualquer outra pessoa. Se você não atingir a nota,
-      a próxima tentativa traz outro sorteio.${prova.reaberta?' Esta é a mesma prova que você já tinha aberto.':''}
+      Leia cada questão com atenção. Suas respostas são salvas durante a avaliação.
+      O prazo para envio é de 90 minutos a partir da abertura.${prova.reaberta?' Esta é a mesma prova que você já tinha aberto.':''}
     </span></div>
 
     ${t && !t.aprovado ? `<div class="aviso aviso-atencao"><span><b>Tentativa anterior: ${t.ultimaNota}%</b>
       Você precisa de ${prova.notaCorte}% para ser aprovado.</span></div>`:''}
 
+    <p class="estado-salvo" id="estadoRespostas" role="status" aria-live="polite"></p>
+    <p id="prazoProva" class="prazo-prova"></p>
     <form id="formQuiz" data-prova="${esc(prova.provaId)}">
       ${questoes.map((q,i)=>`
         <div class="questao" data-q="${esc(q.id)}">
@@ -2338,7 +2384,7 @@ T.privacidade = async () => `
 
     <h2>4. Vídeos incorporados</h2>
     <p>As videoaulas são exibidas pelo YouTube em modo de privacidade reforçada (youtube-nocookie.com), que não instala cookies de rastreamento antes de você iniciar a reprodução.</p>
-    <p>Para marcar a aula sozinha quando você termina de assistir, a página carrega o componente de player do YouTube e acompanha apenas o quanto do vídeo já passou. O que fica guardado no seu progresso é o identificador dos vídeos que você concluiu, nada além disso. A Academia não acompanha o que você assiste fora dela.</p>
+    <p>Para marcar a aula sozinha quando você termina de assistir, a página carrega o componente de player do YouTube e acompanha apenas o quanto do vídeo já passou. Guardamos a posição de retomada, os intervalos reproduzidos e os registros de conclusão para acompanhar seu estudo. A Academia não acompanha o que você assiste fora dela.</p>
 
     <h2>5. Com quem compartilhamos</h2>
     <p>Não vendemos e não cedemos seus dados a terceiros para fins comerciais. Utilizamos o Google Firebase como operador de infraestrutura. Para redes parceiras, compartilhamos apenas dados de servidores vinculados àquela rede, para comprovação de formação.</p>
@@ -2387,7 +2433,11 @@ T.erro404 = msg => `
 /* ---------------------------------------------------------------------------
    ROTEADOR
 --------------------------------------------------------------------------- */
+let limparTela = () => {};
+let renderId = 0;
 async function renderizar(){
+  const atual = ++renderId;
+  limparTela(); limparTela = () => {};
   const partes = (location.hash || "#/inicio").replace(/^#\/?/,"").split("/");
   const [r, p1, p2] = partes;
   const main = $("#main");
@@ -2406,6 +2456,7 @@ async function renderizar(){
     html = `<section class="bloco"><div class="container"><div class="aviso aviso-erro"><span><b>Não foi possível carregar</b>${esc(e.message)}</span></div></div></section>`;
   }
 
+  if(atual !== renderId) return;
   main.innerHTML = html;
 
   $$("nav.principal a").forEach(a=>{
@@ -2544,6 +2595,8 @@ function comApiYoutube(entao){
 }
 
 function ligarAula(cursoId, aulaId){
+  if(!MODO_DEMO) return ligarAulaSegura(cursoId,aulaId);
+  ligarNotas(cursoId,aulaId);
   const bloco   = $("#blocoConclusao");
   const destino = bloco?.dataset.destino || `#/curso/${cursoId}`;
   const seguir  = bloco?.dataset.seguir  || "Continuar →";
@@ -2678,6 +2731,7 @@ function ligarAula(cursoId, aulaId){
 }
 
 function ligarAvaliacao(cursoId){
+  ligarRascunhoProva();
   $$("[data-emitir]").forEach(b=>b.addEventListener("click", ()=>emitir(b.dataset.emitir)));
 
   $("#formQuiz")?.addEventListener("submit", async ev=>{
@@ -2699,6 +2753,7 @@ function ligarAvaliacao(cursoId){
 
     try {
       const r = await Dados.corrigirQuiz(provaId, cursoId, respostas);
+      E.encerrarRascunho?.();
       evento("avaliacao_respondida", { curso: cursoId, nota: r.nota, aprovado: r.aprovado });
 
       /* Devolutiva. Aprovado recebe a alternativa correta e a explicação, porque
@@ -2739,7 +2794,7 @@ function ligarAvaliacao(cursoId){
             ? '<button class="btn btn-primario" data-emitir="'+cursoId+'">Emitir meu certificado</button>'
             : `<p style="font-size:.9rem;max-width:52ch;margin:0 auto 1rem">
                  Reveja as aulas das questões que você errou. A próxima tentativa
-                 traz outro sorteio de questões, não estas mesmas.
+                 pode incluir questões diferentes ou repetidas.
                </p>
                ${(!r.tentativasMax || r.tentativasUsadas < r.tentativasMax)
                   ? '<button class="btn btn-primario" id="tentarDeNovo">Tentar novamente</button> '
@@ -2887,6 +2942,8 @@ $("#btnSalvarPerfil").addEventListener("click", async ()=>{
   if (nome.length < 3) return alerta("Informe seu nome completo. É ele que vai impresso no certificado.", "atencao", "#msgPerfil");
   if (!nome.includes(" ")) return alerta("Informe nome e sobrenome, exatamente como no seu documento.", "atencao", "#msgPerfil");
   if (cpf && !cpfValido(cpf)) return alerta("CPF inválido. Confira os números digitados.", "erro", "#msgPerfil");
+  const botaoPerfil=$("#btnSalvarPerfil");botaoPerfil.disabled=true;
+  try {
   await Dados.salvarPerfil({
     nome, cpf, municipio:$("#pfMunicipio").value.trim(),
     escola:$("#pfEscola").value.trim(), cargo:$("#pfCargo").value
@@ -2894,6 +2951,8 @@ $("#btnSalvarPerfil").addEventListener("click", async ()=>{
   alerta("Dados salvos.", "ok", "#msgPerfil");
   atualizarBotaoConta();
   setTimeout(fecharPerfil, 900);
+  }catch(e){alerta(e.message||"Não foi possível salvar seus dados.","erro","#msgPerfil");}
+  finally{botaoPerfil.disabled=false;}
 });
 
 $("#btnSair").addEventListener("click", ()=>Dados.sair());
@@ -2908,11 +2967,127 @@ $("#btnLgpd").addEventListener("click", ()=>{
 
 window.addEventListener("hashchange", ()=>{ renderizar(); window.scrollTo({ top:0, behavior:"instant" }); });
 
+function urlSegura(valor) {
+  try { const u=new URL(valor,location.href);return ['http:','https:'].includes(u.protocol)?u.href:'#'; }catch{return '#';}
+}
+function ligarNotas(cursoId,aulaId){
+  const campo=$('#anotacaoAula'),botao=$('#salvarAnotacao'),status=$('#estadoAnotacao');
+  if(!campo)return;
+  const chave=cursoId+'_'+aulaId,local='academia-nota-'+(E.usuario?.uid||'demo')+'-'+chave;
+  const dizer=t=>{if(status.isConnected)status.textContent=t;};
+  let rascunho=null;
+  try{rascunho=localStorage.getItem(local);}catch{}
+  if(!MODO_DEMO&&!E.usuario){dizer('Entre na sua conta para salvar anotações.');return;}
+  (async()=>{
+    try{const texto=MODO_DEMO?'':await Dados.lerAnotacao(chave);if(!campo.isConnected)return;
+      campo.value=rascunho??texto;dizer(rascunho!==null?'Rascunho recuperado deste navegador. Salve para sincronizar.':'Suas anotações são privadas.');
+    }catch{if(rascunho!==null)campo.value=rascunho;dizer('Não foi possível carregar as anotações. Reabra a aula antes de substituir o texto salvo.');return;}
+    campo.disabled=false;botao.disabled=false;
+  })();
+  campo.addEventListener('input',()=>{try{localStorage.setItem(local,campo.value);}catch{}dizer('Rascunho neste navegador. Clique em salvar para sincronizar.');});
+  botao.addEventListener('click',async()=>{botao.disabled=true;dizer('Salvando…');const texto=campo.value;
+    try{if(!MODO_DEMO)await Dados.salvarAnotacao(chave,texto);if(campo.value===texto){try{localStorage.removeItem(local);}catch{}dizer(MODO_DEMO?'Demonstração: anotação apenas nesta tela.':'Anotações salvas na sua conta.');}}
+    catch{dizer('Não foi possível sincronizar. O rascunho permanece neste navegador; tente salvar novamente.');}finally{botao.disabled=false;}
+  });
+}
+async function ligarAulaSegura(cursoId,aulaId){
+  ligarNotas(cursoId,aulaId);
+  const area=$('#blocoConclusao'),botao=$('#concluirAula'),status=$('#estadoProgresso');
+  if(!area)return;
+  if(!E.usuario){status.innerHTML='Entre na sua conta para acompanhar esta aula. <button class="btn btn-primario" id="entrarAula">Entrar e estudar</button>';$('#entrarAula').onclick=abrirLogin;return;}
+  let encerrada=false,player=null,timer=null,pendente=false,sessao=null,emCartaz=null;
+  let interacao=Date.now();
+  const atividade=()=>interacao=Date.now();
+  for(const ev of ['pointerdown','keydown','scroll'])window.addEventListener(ev,atividade,{passive:true});
+  limparTela=()=>{encerrada=true;clearInterval(timer);for(const ev of ['pointerdown','keydown','scroll'])window.removeEventListener(ev,atividade);try{player?.destroy();}catch{}};
+  const dizer=t=>{if(!encerrada&&status.isConnected)status.textContent=t;};
+  const pintar=r=>{
+    if(r.progresso)E.progresso[cursoId]=r.progresso;
+    if(encerrada)return;
+    if(r.concluida){
+      if(botao)botao.disabled=true;
+      area.classList.add('feita');
+      area.innerHTML=`<div class="txt"><strong>✓ Aula concluída</strong><span>Progresso salvo na sua conta.</span></div><a class="btn btn-primario" href="${urlSegura(area.dataset.destino)}">${esc(area.dataset.seguir||'Continuar')}</a>`;
+      const p=progressoDe(cursoId);if($('#pctAula'))$('#pctAula').textContent=p.pct+'%';if($('#barraAula'))$('#barraAula').style.width=p.pct+'%';
+      dizer('Progresso salvo. Você pode continuar ou rever o conteúdo.');
+    }else{
+      if(botao){botao.disabled=!r.pronta;botao.textContent=r.pronta?(botao.dataset.rotulo||'Concluir aula'):'Acompanhando sua participação…';}
+      dizer(r.pronta?'Participação registrada. Você já pode concluir a aula.':`Participação salva · ${Math.floor(r.segundos)} de ${r.minimo} segundos mínimos${emCartaz?' · assista a 90% de cada vídeo':''}.`);
+    }
+  };
+  let amostra=null;
+  const sincronizar=async(concluir=false)=>{
+    if(encerrada||pendente||!sessao)return;
+    pendente=true;dizer('Salvando progresso…');
+    try{
+      let video;
+      if(player&&emCartaz&&player.getDuration?.()>0)video={id:emCartaz,posicao:player.getCurrentTime(),duracao:player.getDuration(),tocando:player.getPlayerState()===1&&!document.hidden};
+      const ativo=!document.hidden&&(video?video.tocando:Date.now()-interacao<90000);
+      const r=await Dados.acompanharAula({cursoId,aulaId,token:sessao.token,ativo,...(video?{video}:{}),concluir});
+      amostra=r;pintar(r);
+      if(r.concluida)clearInterval(timer);
+    }catch(e){dizer(e.message||'Não foi possível salvar. Confira a conexão; tentaremos novamente.');if(botao)botao.disabled=false;}
+    finally{pendente=false;}
+  };
+  try{sessao=await Dados.iniciarAula(cursoId,aulaId);if(encerrada)return;dizer(sessao.concluida?'Aula já concluída. Você pode rever o conteúdo.':'Acompanhamento conectado. Seu progresso será salvo durante a aula.');}
+  catch(e){dizer(e.message||'Não foi possível iniciar o acompanhamento. Reabra a aula.');return;}
+  if(botao)botao.onclick=async()=>{botao.disabled=true;await sincronizar(true);};
+  const moldura=$('#quadro')?.closest('.player'),videos=(moldura?.dataset.videos||'').split(',').filter(Boolean);
+  if(videos.length){
+    emCartaz=videos[0];
+    comApiYoutube(()=>{if(encerrada)return;
+      player=new YT.Player('quadro',{events:{onReady:()=>{
+        const pos=sessao.videos?.[emCartaz]?.posicao||0;if(pos>0)player.seekTo(pos,true);
+        dizer('Vídeo pronto. A reprodução será acompanhada sem contar saltos.');
+      },onError:()=>dizer('O vídeo não carregou. Confira a conexão ou avise o suporte.'),onStateChange:ev=>{atividade();if(ev.data===1)sincronizar(false);}}});
+    });
+    $$('[data-video]').forEach(b=>b.addEventListener('click',async()=>{
+      if(pendente)return;await sincronizar();if(encerrada)return;
+      emCartaz=b.dataset.video;
+      player?.loadVideoById({videoId:emCartaz,startSeconds:sessao.videos?.[emCartaz]?.posicao||0});
+      $$('[data-video]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
+    }));
+  }
+  timer=setInterval(()=>sincronizar(false),45000);
+  if(matchMedia('(max-width:980px)').matches)$('.modulos-mobile')?.removeAttribute('open');
+}
+function ligarRascunhoProva(){
+  const form=$('#formQuiz'),p=E.provaAtual,status=$('#estadoRespostas'),prazo=$('#prazoProva');
+  if(!form||!p)return;
+  let encerrada=false,debounce=null,relogio=null,fila=Promise.resolve();
+  const chave='academia-prova-'+(E.usuario?.uid||'demo')+'-'+p.provaId;
+  let respostas=p.respostas||{};
+  try{const d=JSON.parse(localStorage.getItem(chave)||'null');if(d)respostas=d;}catch{}
+  for(const input of form.querySelectorAll('input[type=radio]'))input.checked=respostas[input.name.slice(2)]===Number(input.value);
+  const ler=()=>Object.fromEntries([...form.querySelectorAll('input:checked')].map(i=>[i.name.slice(2),Number(i.value)]));
+  const dizer=t=>{if(!encerrada&&status.isConnected)status.textContent=t;};
+  const salvar=()=>{
+    clearTimeout(debounce);const r=ler();try{localStorage.setItem(chave,JSON.stringify(r));}catch{}
+    fila=fila.catch(()=>{}).then(async()=>{
+      if(encerrada)return;
+      dizer('Salvando respostas…');
+      try{if(!MODO_DEMO)await Dados.salvarRespostas(p.provaId,r);dizer('Respostas salvas.');}
+      catch{dizer('Sem sincronização. Rascunho mantido neste navegador; tente novamente ao recuperar a conexão.');}
+    });return fila;
+  };
+  form.addEventListener('change',()=>{try{localStorage.setItem(chave,JSON.stringify(ler()));}catch{}dizer('Rascunho salvo neste navegador. Sincronizando…');clearTimeout(debounce);debounce=setTimeout(salvar,700);});
+  const online=()=>salvar();window.addEventListener('online',online);
+  const tique=()=>{
+    if(!p.expiraEmISO){prazo.textContent='Demonstração sem prazo de envio.';return;}
+    const faltam=Math.max(0,Math.ceil((Date.parse(p.expiraEmISO)-Date.now())/1000));
+    prazo.textContent=faltam?`Tempo restante para envio: ${emSegundos(faltam)}`:'O prazo terminou. Volte ao curso para abrir uma nova tentativa.';
+    if(!faltam){form.querySelector('button[type=submit]')?.setAttribute('disabled','');clearInterval(relogio);}
+  };
+  tique();relogio=setInterval(tique,1000);dizer('Rascunho recuperado. Você pode continuar respondendo.');
+  limparTela=()=>{encerrada=true;clearTimeout(debounce);clearInterval(relogio);window.removeEventListener('online',online);};
+  E.encerrarRascunho=()=>{limparTela();try{localStorage.removeItem(chave);}catch{}};
+}
+
 (async function arrancar(){
   try { await Dados.iniciar(); }
   catch(e){
     console.error("[Academia] Falha ao iniciar:", e);
-    $("#main").innerHTML = `<section class="bloco"><div class="container"><div class="aviso aviso-erro"><span><b>Não foi possível conectar</b>Verifique a configuração do Firebase. Detalhe técnico: ${esc(e.message)}</span></div></div></section>`;
+    $("#main").innerHTML = `<section class="bloco"><div class="container"><div class="aviso aviso-erro"><span><b>Não foi possível conectar</b>Verifique a configuração do Firebase. Tente recarregar a página. Se persistir, fale com o suporte.</span></div></div></section>`;
     return;
   }
   renderizar();

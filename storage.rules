@@ -1,55 +1,26 @@
 rules_version = '2';
-
-// =============================================================================
-// ACADEMIA DO EDUCADOR — Regras do Firebase Storage
-// Aqui ficam os materiais de apoio: PDF, DOC/DOCX, PPT/PPTX, XLS/XLSX e capas.
-//
-// Leitura pública: o professor precisa baixar o material sem atrito, e o
-// arquivo em si não é sigiloso. Escrita: só equipe editorial.
-//
-// Publicar:  firebase deploy --only storage
-// =============================================================================
-
 service firebase.storage {
   match /b/{bucket}/o {
-
-    function ehEditor() {
-      return request.auth != null
-          && (request.auth.token.papel == "admin" || request.auth.token.papel == "editor");
+    function editor() { return request.auth != null && request.auth.token.get('papel','') in ['admin','editor']; }
+    function imagem() { return request.resource.contentType in ['image/jpeg','image/png','image/webp','image/gif']; }
+    function permitido() {
+      return imagem() || request.resource.contentType in [
+        'application/pdf','application/msword','application/vnd.ms-powerpoint','application/vnd.ms-excel','text/plain',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
     }
-
-    // Tipos aceitos. Bloquear o resto evita que o Storage vire depósito de
-    // arquivo executável ou que alguém suba um vídeo de 2 GB por engano.
-    function tipoPermitido() {
-      return request.resource.contentType.matches('application/pdf')
-          || request.resource.contentType.matches('application/msword')
-          || request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.*')
-          || request.resource.contentType.matches('application/vnd.ms-.*')
-          || request.resource.contentType.matches('text/plain')
-          || request.resource.contentType.matches('image/.*');
-    }
-
-    // Materiais de apoio das aulas
+    // Somente criação. Substituições geram outro nome; versões antigas preservam o arquivo.
     match /materiais/{cursoId}/{arquivo} {
-      allow read:   if true;
-      allow write:  if ehEditor()
-                    && request.resource.size < 40 * 1024 * 1024   // 40 MB por arquivo
-                    && tipoPermitido();
-      allow delete: if ehEditor();
+      allow read: if true;
+      allow create: if resource == null && editor() && request.resource.size < 40*1024*1024 && permitido();
+      allow update, delete: if false;
     }
-
-    // Imagens de capa dos cursos
     match /capas/{arquivo} {
-      allow read:   if true;
-      allow write:  if ehEditor()
-                    && request.resource.size < 3 * 1024 * 1024     // 3 MB
-                    && request.resource.contentType.matches('image/.*');
-      allow delete: if ehEditor();
+      allow read: if true;
+      allow create: if resource == null && editor() && request.resource.size < 3*1024*1024 && imagem();
+      allow update, delete: if false;
     }
-
-    // Qualquer outro caminho fica fechado
-    match /{caminho=**} {
-      allow read, write: if false;
-    }
+    match /{caminho=**} { allow read, write: if false; }
   }
 }

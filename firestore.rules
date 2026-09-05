@@ -1,205 +1,68 @@
 rules_version = '2';
-
-// =============================================================================
-// ACADEMIA DO EDUCADOR — Regras do Firestore
-// Projeto: portal-educador-academia
-//
-// TRÊS PRINCÍPIOS QUE GOVERNAM ESTE ARQUIVO
-//
-// 1. O professor só enxerga e escreve o que é dele.
-// 2. Conteúdo publicado é público; rascunho só a equipe vê.
-// 3. Gabarito de quiz e certificado NUNCA passam pelo navegador do usuário.
-//    Quem lê gabarito e quem cria certificado é o Admin SDK, dentro das
-//    Cloud Functions. É isso que impede alguém de forjar um certificado
-//    abrindo o console do navegador.
-//
-// Publicar:  firebase deploy --only firestore:rules
-// =============================================================================
-
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // ------------------------------------------------------------------
-    // FUNÇÕES AUXILIARES
-    // Os papéis vêm de custom claims no token (definidos pela Function
-    // `definirPapel`). Claim é mais barato que consultar coleção: não gasta
-    // leitura e não pode ser adulterado pelo cliente.
-    // ------------------------------------------------------------------
-    function autenticado()  { return request.auth != null; }
-    function dono(uid)      { return autenticado() && request.auth.uid == uid; }
-    function papel()        { return autenticado() ? request.auth.token.papel : ""; }
-    function ehAdmin()      { return papel() == "admin"; }
-    function ehEditor()     { return papel() == "admin" || papel() == "editor"; }
-
-    function cursoPublicado(cursoId) {
-      return get(/databases/$(database)/documents/cursos/$(cursoId)).data.status == "publicado";
+    function login() { return request.auth != null; }
+    function dono(uid) { return login() && request.auth.uid == uid; }
+    function papel() { return login() ? request.auth.token.get('papel','') : ''; }
+    function admin() { return papel() == 'admin'; }
+    function editor() { return papel() in ['admin','editor']; }
+    function curso(cid) { return get(/databases/$(database)/documents/cursos/$(cid)).data; }
+    function publicado(cid) { return curso(cid).status == 'publicado'; }
+    function editavel(d) {
+      return d.status != 'publicado' && !d.get('historicoPublicado',false) && !('publicadoEm' in d);
     }
-
-    // ==================================================================
-    // PERMISSÕES — espelho legível dos papéis
-    // A verdade está no custom claim; esta coleção existe para o painel
-    // conseguir listar a equipe. Só admin escreve.
-    // ==================================================================
-    match /equipe/{uid} {
-      allow read:  if ehEditor();
-      allow write: if ehAdmin();
+    function editarConteudo(cid) { return editor() && editavel(curso(cid)); }
+    match /equipe/{uid} { allow read: if editor(); allow write: if false; }
+    match /auditoria/{id} { allow read: if admin(); allow write: if false; }
+    match /cursos/{cid} {
+      allow read: if resource.data.status == 'publicado' || editor();
+      allow create: if editor() && request.resource.data.status == 'rascunho'
+        && !('historicoPublicado' in request.resource.data) && !('publicadoEm' in request.resource.data);
+      // Publicação e congelamento apenas via publicarCurso.
+      allow update: if editor() && editavel(resource.data)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status','historicoPublicado','publicadoEm']);
+      allow delete: if false;
+      match /modulos/{id} { allow read: if publicado(cid) || editor(); allow write: if editarConteudo(cid); }
+      match /aulas/{id} { allow read: if publicado(cid) || editor(); allow write: if editarConteudo(cid); }
+      match /questoes/{id} { allow read: if editor(); allow write: if editarConteudo(cid); }
+      match /gabarito/{id} { allow read: if false; allow write: if editarConteudo(cid); }
     }
-
-    // ==================================================================
-    // CATÁLOGO
-    // ==================================================================
-    match /cursos/{cursoId} {
-      // Público vê apenas o que está publicado. A equipe vê tudo.
-      allow read:   if resource.data.status == "publicado" || ehEditor();
-      allow create: if ehEditor();
-      allow update: if ehEditor()
-                    // só admin pode colocar no ar ou tirar do ar
-                    && (request.resource.data.status == resource.data.status || ehAdmin());
-      allow delete: if ehAdmin();
-
-      match /modulos/{moduloId} {
-        allow read:  if cursoPublicado(cursoId) || ehEditor();
-        allow write: if ehEditor();
-      }
-
-      match /aulas/{aulaId} {
-        allow read:  if cursoPublicado(cursoId) || ehEditor();
-        allow write: if ehEditor();
-      }
-
-      // BANCO DE QUESTÕES — enunciado e alternativas.
-      //
-      // Leitura fechada para o aluno, e isso é deliberado. Enquanto o navegador
-      // podia ler esta coleção, bastava abrir o console para ver o banco inteiro
-      // antes de começar a prova. Agora quem monta a avaliação é a Function
-      // `sortearProva`, que sorteia um subconjunto, embaralha as alternativas e
-      // devolve só o que aquela pessoa vai responder.
-      //
-      // O editor continua lendo, porque precisa editar as questões no painel.
-      match /questoes/{questaoId} {
-        allow read:  if ehEditor();
-        allow write: if ehEditor();
-      }
-
-      // GABARITO — resposta correta e explicação.
-      // Leitura negada para TODO MUNDO no cliente, inclusive para editor.
-      // Quem lê é a Cloud Function `corrigirQuiz`, que usa o Admin SDK e
-      // por isso ignora estas regras. O editor escreve, mas não relê:
-      // o painel mantém a resposta em memória enquanto edita.
-      match /gabarito/{questaoId} {
-        allow read:   if false;
-        allow write:  if ehEditor();
-      }
+    match /trilhas/{id} {
+      allow read: if resource.data.status == 'publicado' || editor();
+      allow create: if editor() && (request.resource.data.status != 'publicado' || admin());
+      allow update: if admin() || (editor() && resource.data.status != 'publicado' && request.resource.data.status != 'publicado');
+      allow delete: if admin();
     }
-
-    match /trilhas/{trilhaId} {
-      allow read:   if resource.data.status == "publicado" || ehEditor();
-      allow create: if ehEditor();
-      allow update: if ehEditor();
-      allow delete: if ehAdmin();
-    }
-
-    // ==================================================================
-    // PROFESSOR
-    // ==================================================================
     match /users/{uid} {
-      allow read, write: if dono(uid);
-
-      // ----------------------------------------------------------------
-      // PROGRESSO — aulas concluídas, por identificador real da aula.
-      //
-      // O professor escreve o próprio progresso, senão cada aula concluída
-      // custaria uma invocação de Cloud Function. Mas escrever livre significa
-      // que qualquer pessoa com o console aberto marca o curso inteiro em um
-      // segundo e sai com o certificado. Daí estas três amarras:
-      //
-      //   1. Cada gravação acrescenta NO MÁXIMO uma aula.
-      //   2. Entre duas conclusões precisa passar pelo menos 45 segundos,
-      //      medidos pelo relógio do servidor.
-      //   3. O carimbo de tempo tem que ser o do servidor (request.time), e
-      //      não um valor escolhido pelo cliente. Sem isso bastaria gravar uma
-      //      data antiga para derrubar a amarra 2.
-      //
-      // Resultado prático: um curso de nove aulas não fecha em menos de sete
-      // minutos, nem pelo console. Não é inviolável, e não precisa ser: quem
-      // decide se houve aprendizado é a avaliação final, e essa é montada e
-      // corrigida no servidor.
-      // ----------------------------------------------------------------
-      function listaAulas(dados)  { return dados.get('aulas', []); }
-      function ultimaConclusao(d) { return d.get('ultimaConclusaoEm', request.time - duration.value(1, 'h')); }
-      function carimboDoServidor() { return request.resource.data.atualizadoEm == request.time; }
-
-      match /progresso/{cursoId} {
-        allow read: if dono(uid);
-
-        allow create: if dono(uid)
-                      && carimboDoServidor()
-                      && listaAulas(request.resource.data).size() <= 1;
-
-        allow update: if dono(uid)
-                      && carimboDoServidor()
-                      && listaAulas(request.resource.data).size()
-                           <= listaAulas(resource.data).size() + 1
-                      && (
-                           // não cresceu: registro de vídeo assistido ou
-                           // desmarcação. Passa livre, mas não pode mexer no
-                           // carimbo da última conclusão.
-                           (listaAulas(request.resource.data).size()
-                              <= listaAulas(resource.data).size()
-                            && (!('ultimaConclusaoEm' in request.resource.data)
-                                || request.resource.data.ultimaConclusaoEm
-                                     == resource.data.get('ultimaConclusaoEm', null)))
-                           ||
-                           // cresceu: exige o intervalo mínimo e carimbo novo
-                           (request.resource.data.ultimaConclusaoEm == request.time
-                            && request.time > ultimaConclusao(resource.data) + duration.value(45, 's'))
-                         );
-
-        allow delete: if false;
+      allow read: if dono(uid);
+      // Campos de perfil não conferem papéis nem determinam progresso.
+      allow create, update: if dono(uid)
+        && request.resource.data.keys().hasOnly(['nome','email','fotoURL','municipio','escola','cargo','cpf','aceiteTermos','criadoEm','ultimoAcesso'])
+        && request.resource.data.get('nome','') is string && request.resource.data.get('nome','').size() <= 160
+        && request.resource.data.get('cpf','') is string && request.resource.data.get('cpf','').size() <= 20
+        && request.resource.data.get('municipio','') is string && request.resource.data.get('municipio','').size() <= 160
+        && request.resource.data.get('escola','') is string && request.resource.data.get('escola','').size() <= 240
+        && request.resource.data.get('email','') == request.auth.token.get('email','');
+      allow delete: if false;
+      match /progresso/{cid} { allow read: if dono(uid); allow write: if false; }
+      match /tentativas/{cid} { allow read: if dono(uid); allow write: if false; }
+      match /anotacoes/{aid} {
+        allow read, delete: if dono(uid);
+        allow create, update: if dono(uid) && request.resource.data.keys().hasOnly(['texto','atualizadoEm'])
+          && request.resource.data.texto is string && request.resource.data.texto.size() <= 12000
+          && request.resource.data.atualizadoEm == request.time;
       }
-
-      // Tentativas de quiz: o aluno LÊ (para ver a própria nota), mas não
-      // escreve — quem grava é a Function após corrigir. Se o cliente pudesse
-      // escrever aqui, bastaria gravar aprovado:true e pular a avaliação.
-      match /tentativas/{cursoId} {
-        allow read:  if dono(uid);
-        allow write: if false;
-      }
-
-      // PROVAS SORTEADAS — guardam quais questões caíram e em que ordem as
-      // alternativas foram embaralhadas. Fechado nos dois sentidos: é essa
-      // ordem que traduz a resposta marcada de volta para o gabarito. Quem
-      // lê e escreve é a Function, pelo Admin SDK.
-      match /provas/{provaId} {
-        allow read:  if false;
-        allow write: if false;
-      }
+      match /provas/{id} { allow read, write: if false; }
+      match /sessoes/{id} { allow read, write: if false; }
+      match /emissoes/{id} { allow read, write: if false; }
     }
-
-    // ==================================================================
-    // CERTIFICADOS
-    // Leitura pública e sem login — é o que faz validar.html funcionar para
-    // o RH da prefeitura. Escrita totalmente bloqueada no cliente: emissão e
-    // revogação acontecem apenas nas Cloud Functions.
-    // ==================================================================
-    match /certificados/{codigo} {
-      allow read:  if true;
-      allow write: if false;
-    }
-
-    // ==================================================================
-    // RELATÓRIOS POR REDE DE ENSINO (fase 3)
-    // ==================================================================
-    match /municipios/{municipioId} {
-      allow read:  if ehAdmin() || (autenticado() && request.auth.token.municipio == municipioId);
-      allow write: if false;
-    }
-
-    // ==================================================================
-    // PADRÃO — o que não foi declarado acima fica fechado
-    // ==================================================================
-    match /{document=**} {
-      allow read, write: if false;
-    }
+    // Dados completos só para titular e administrador. Sem leitura pública.
+    // consultarCertificado devolve uma projeção mínima, inclusive de registros antigos.
+    match /certificados/{codigo} { allow read: if admin() || (login() && resource.data.uid == request.auth.uid); allow write: if false; }
+    // Vínculo CPF -> conta, criado na primeira emissão. Fechado nos dois sentidos:
+    // é o que impede emitir certificado com o CPF de outra pessoa.
+    match /cpfs/{cpf} { allow read, write: if false; }
+    match /municipios/{id} { allow read: if admin(); allow write: if false; }
+    match /{document=**} { allow read, write: if false; }
   }
 }

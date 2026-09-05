@@ -1,9 +1,11 @@
 {
   "name": "academia-do-educador-functions",
-  "description": "Cloud Functions da Academia do Educador — correção de quiz, emissão de certificado e gestão de papéis",
-  "version": "1.0.0",
+  "description": "Cloud Functions da Academia do Educador \u2014 corre\u00e7\u00e3o de quiz, emiss\u00e3o de certificado e gest\u00e3o de pap\u00e9is",
+  "version": "2.0.0",
   "type": "module",
-  "engines": { "node": "22" },
+  "engines": {
+    "node": "22"
+  },
   "main": "index.js",
   "scripts": {
     "serve": "firebase emulators:start --only functions",
