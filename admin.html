@@ -159,6 +159,7 @@ label.rot{display:block;font-size:.83rem;font-weight:600;margin:0 0 .3rem;color:
 .s-rascunho{background:#f1f5f9;color:var(--suave);border-color:var(--linha)}
 .s-revisao{background:var(--alerta-bg);color:var(--alerta);border-color:#f0d9a8}
 .s-publicado{background:var(--verde-100);color:var(--verde-700);border-color:#bfe0c8}
+.s-arquivado{background:#ede9fe;color:#5b21b6;border-color:#d6ccf5}
 .s-info{background:var(--azul-100);color:var(--azul-700);border-color:#c3d6ea}
 
 table{width:100%;border-collapse:collapse;font-size:.9rem}
@@ -332,7 +333,7 @@ const REGIAO    = "southamerica-east1";
 const MODO_DEMO = !FIREBASE_CONFIG.apiKey;   // vale até a apiKey ser colada
 
 const NIVEIS = { iniciante:"Iniciante", intermediario:"Intermediário", avancado:"Avançado" };
-const STATUS = { rascunho:"Rascunho", revisao:"Em revisão", publicado:"Publicado" };
+const STATUS = { rascunho:"Rascunho", revisao:"Em revisão", publicado:"Publicado", arquivado:"Arquivado" };
 const TIPOS_ARQUIVO = {
   pdf:"PDF", doc:"Word", docx:"Word", ppt:"PowerPoint", pptx:"PowerPoint",
   xls:"Planilha", xlsx:"Planilha", txt:"Texto", jpg:"Imagem", jpeg:"Imagem", png:"Imagem"
@@ -965,9 +966,15 @@ const Api = MODO_DEMO ? ApiDemo : ApiFirebase;
 const T = {};
 
 /* ---------- LISTA DE CURSOS ---------- */
+let filtroCursos = "ativos";
+
 T.cursos = async () => {
   S.cursos = await Api.listarCursos();
-  const linhas = S.cursos.map(c=>`
+  const nArquivados = S.cursos.filter(c=>c.status==="arquivado").length;
+  const visiveis = filtroCursos==="todos" ? S.cursos
+    : filtroCursos==="arquivados" ? S.cursos.filter(c=>c.status==="arquivado")
+    : S.cursos.filter(c=>c.status!=="arquivado");
+  const linhas = visiveis.map(c=>`
     <tr class="clicavel" data-ir="#/curso/${c.id}/dados">
       <td><b>${esc(c.titulo)}</b><br><span style="font-size:.78rem;color:var(--suave)">${esc(c.id)}</span></td>
       <td>${NIVEIS[c.nivel]||c.nivel||"—"}</td>
@@ -979,15 +986,22 @@ T.cursos = async () => {
 
   return `
   <div class="l-auto" style="justify-content:space-between;margin-bottom:20px">
-    <div><h1 style="margin:0">Cursos</h1><p style="margin:0;color:var(--suave)">${S.cursos.length} cursos cadastrados</p></div>
-    <button class="btn b-primario" id="novoCurso" ${podeEditar()?"":"disabled"}>+ Novo curso</button>
+    <div><h1 style="margin:0">Cursos</h1><p style="margin:0;color:var(--suave)">${visiveis.length} de ${S.cursos.length} cursos${nArquivados?` · ${nArquivados} arquivado${nArquivados>1?"s":""}`:""}</p></div>
+    <div class="l-auto">
+      <select id="filtroSituacao" aria-label="Filtrar por situação" style="padding:.5rem .6rem;border:1px solid var(--linha);border-radius:8px;background:#fff;font:inherit">
+        <option value="ativos" ${filtroCursos==="ativos"?"selected":""}>Ativos</option>
+        <option value="arquivados" ${filtroCursos==="arquivados"?"selected":""}>Arquivados</option>
+        <option value="todos" ${filtroCursos==="todos"?"selected":""}>Todos</option>
+      </select>
+      <button class="btn b-primario" id="novoCurso" ${podeEditar()?"":"disabled"}>+ Novo curso</button>
+    </div>
   </div>
   <div id="msg"></div>
   <div class="cartao" style="padding:0;overflow:hidden">
-    ${S.cursos.length ? `<table>
+    ${visiveis.length ? `<table>
       <thead><tr><th>Curso</th><th>Nível</th><th>Carga</th><th>Aulas</th><th>Avaliação</th><th>Situação</th></tr></thead>
       <tbody>${linhas}</tbody></table>`
-    : `<div class="vazio"><p>Nenhum curso cadastrado ainda.</p><p style="font-size:.88rem">Use o script de importação para trazer os 10 cursos existentes, ou crie um novo.</p></div>`}
+    : `<div class="vazio"><p>${S.cursos.length?"Nenhum curso nesta situação.":"Nenhum curso cadastrado ainda."}</p><p style="font-size:.88rem">Use o script de importação para trazer os 10 cursos existentes, ou crie um novo.</p></div>`}
   </div>`;
 };
 
@@ -1334,8 +1348,9 @@ T.curso_publicar = async id => {
         <button class="btn b-neutro" data-status="rascunho"  ${c.status==="rascunho"?"disabled":""}>Voltar para rascunho</button>
         <button class="btn b-neutro" data-status="revisao"   ${c.status==="revisao"?"disabled":""}>Enviar para revisão</button>
         <button class="btn b-primario" data-status="publicado" ${c.status==="publicado"||!tudoOk?"disabled":""}>Publicar curso</button>
+        <button class="btn b-neutro" data-status="arquivado" ${c.status==="arquivado"?"disabled":""}>Arquivar</button>
       </div>
-      <p class="ajuda" style="margin-top:.7rem">Publicar torna o curso visível para todos os professores imediatamente.</p>
+      <p class="ajuda" style="margin-top:.7rem">Publicar torna o curso visível para todos os professores imediatamente. Arquivar tira o curso do catálogo e da lista principal, sem apagar nada: os certificados já emitidos continuam válidos e o código segue sendo aceito na validação.</p>
     ` : `
       <div class="aviso a-atencao"><span><b>Publicação restrita a administradores</b>Como editor, você pode enviar o curso para revisão. Um administrador faz a publicação.</span></div>
       <button class="btn b-neutro" data-status="revisao" ${c.status==="revisao"?"disabled":""}>Enviar para revisão</button>
@@ -1345,7 +1360,7 @@ T.curso_publicar = async id => {
   ${podePublicar() ? `
   <div class="cartao" style="border-color:#f2c4c4">
     <h2 style="color:var(--erro)">Excluir curso</h2>
-    <p style="color:var(--suave);font-size:.9rem">Remove o curso, seus módulos, aulas e questões. Certificados já emitidos permanecem válidos — eles guardam o título e a carga horária no próprio registro.</p>
+    <p style="color:var(--suave);font-size:.9rem">Remove o curso, seus módulos, aulas e questões, sem volta. Só funciona em curso fora do ar e que nunca emitiu certificado. Se algum professor já se certificou nele, o servidor recusa e o caminho é <b>Arquivar</b>.</p>
     <button class="btn b-perigo" id="excluirCurso">Excluir este curso</button>
   </div>`:''}`;
 };
@@ -1495,8 +1510,16 @@ T.processo = async () => `
     <p>Em <b>Trilhas</b>, encaixe o curso na sequência a que ele pertence. Curso solto no catálogo é encontrado; curso dentro de trilha é <i>cursado até o fim</i>.</p>
   </div>
 
+  <div class="cartao">
+    <h2>8. Aposentar uma versão antiga</h2>
+    <p>Toda edição de curso publicado gera uma cópia, então a lista cresce. Para limpar sem perder nada:</p>
+    <p><b>Arquivar</b> é para curso que já formou professor. Ele sai do catálogo e da lista principal, mas continua no banco e os certificados emitidos seguem sendo aceitos na validação. É o destino de toda versão substituída por uma nova.</p>
+    <p><b>Excluir</b> é para curso que nunca formou ninguém: rascunho abandonado, versão de teste, duplicata criada por engano. Só funciona com o curso fora do ar e sem nenhum certificado emitido. Se houver um certificado sequer, o servidor recusa e manda arquivar.</p>
+    <p style="color:var(--suave);font-size:.9rem">Na lista de cursos, o seletor ao lado de "Novo curso" alterna entre Ativos, Arquivados e Todos. O padrão é Ativos.</p>
+  </div>
+
   <div class="aviso a-atencao">
-    <span><b>Uma regra que evita dor de cabeça</b>Depois que um curso está publicado, use Criar nova versão para editar uma cópia. O conteúdo da versão original fica protegido.</span>
+    <span><b>Uma regra que evita dor de cabeça</b>Depois que um curso está publicado, use Criar nova versão para editar uma cópia. O conteúdo da versão original fica protegido. Quando a nova versão entrar no ar, arquive a antiga em vez de deixar as duas na lista.</span>
   </div>`;
 
 T.naoEncontrado = (msg) => `<div class="vazio"><h1>Não encontrado</h1><p>${esc(msg||"O item acessado não existe.")}</p><a class="btn b-primario" href="#/cursos">Voltar aos cursos</a></div>`;
@@ -1551,6 +1574,7 @@ async function renderizar(){
 --------------------------------------------------------------------------- */
 function ligarListaCursos(){
   $$("[data-ir]").forEach(tr => tr.addEventListener("click", ()=> location.hash = tr.dataset.ir));
+  $("#filtroSituacao")?.addEventListener("change", async e=>{ filtroCursos = e.target.value; await renderizar(); });
   $("#novoCurso")?.addEventListener("click", async ()=>{
     const titulo = prompt("Título do novo curso:");
     if (!titulo) return;
@@ -1909,14 +1933,18 @@ function ligarPublicar(id){
   });
   $$("[data-status]").forEach(b=>b.addEventListener("click",async()=>{
     const novo=b.dataset.status;
-    if(novo==="publicado"&&!confirm("Publicar este curso após validar o conteúdo?"))return;
-    if(novo!=="publicado"&&!confirm("Alterar a situação pode retirar o curso do acesso dos alunos. Para revisar conteúdo, prefira criar uma nova versão. Continuar?"))return;
+    const perguntas={
+      publicado:"Publicar este curso após validar o conteúdo?",
+      arquivado:"Arquivar tira o curso do catálogo e da lista principal. Quem estiver cursando perde o acesso ao conteúdo, mas certificados já emitidos continuam válidos. Confirma?",
+      rascunho:"Voltar para rascunho retira o curso do acesso dos professores. Para revisar conteúdo, prefira criar uma nova versão. Continuar?",
+      revisao:"Enviar para revisão retira o curso do acesso dos professores. Continuar?"};
+    if(!confirm(perguntas[novo]||"Alterar a situação deste curso?"))return;
     b.disabled=true;
     try{await Api.publicarCurso(id,novo);cursoAberto=null;await renderizar();avisar("Situação atualizada.","ok");}
     catch(e){avisar(e.message||"Não foi possível alterar a situação.","erro");b.disabled=false;}
   }));
   $("#excluirCurso")?.addEventListener("click",async()=>{
-    if(prompt('Digite EXCLUIR para apagar este rascunho:')!=="EXCLUIR")return;
+    if(prompt('Isto apaga o curso e todo o conteúdo dele, sem volta.\n\nDigite EXCLUIR para confirmar:')!=="EXCLUIR")return;
     try{await Api.excluirCurso(id);cursoAberto=null;location.hash="#/cursos";}
     catch(e){avisar(e.message||"Não foi possível excluir.","erro");}
   });

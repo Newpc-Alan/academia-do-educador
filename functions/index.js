@@ -245,7 +245,7 @@ export const definirPapel = onCall(async req=>{
 });
 export const publicarCurso = onCall(async req=>{
   const uid=equipe(req),cursoId=id(req.data?.cursoId),status=req.data?.status;
-  if(!['rascunho','revisao','publicado'].includes(status))throw new HttpsError('invalid-argument','Situação inválida.');
+  if(!['rascunho','revisao','publicado','arquivado'].includes(status))throw new HttpsError('invalid-argument','Situação inválida.');
   if(status!=='revisao')admin(req);
   return db.runTransaction(async tx=>{
     const ref=db.doc(`cursos/${cursoId}`),s=await tx.get(ref);if(!s.exists)fail('Curso não encontrado.');
@@ -269,7 +269,7 @@ export const duplicarCurso = onCall(async req=>{
     const subs=await Promise.all(['modulos','aulas','questoes','gabarito'].map(async n=>[n,await tx.get(ref.collection(n))]));
     if(subs.reduce((n,[,s])=>n+s.size,0)>440)fail('Curso grande: solicite a cópia à equipe técnica.');
     const c={...s.data()};delete c.publicadoEm;delete c.historicoPublicado;
-    c.status='rascunho';c.versao=Number(c.versao||1)+1;c.origemId=cursoId;c.titulo=`${c.titulo} (versão ${c.versao})`;
+    c.status='rascunho';c.versao=Number(c.versao||1)+1;c.origemId=cursoId;c.titulo=`${String(c.titulo||'').replace(/\s*\(vers[ãa]o\s*\d+\)\s*$/i,'')} (versão ${c.versao})`;
     tx.create(novo,{...c,atualizadoEm:carimbo()});
     for(const [n,s] of subs)for(const d of s.docs)tx.create(novo.collection(n).doc(d.id),d.data());
     audit(tx,uid,'duplicarCurso',{cursoId,novoId:novo.id});return {id:novo.id};
@@ -277,9 +277,18 @@ export const duplicarCurso = onCall(async req=>{
 });
 export const excluirCurso = onCall(async req=>{
   const uid=admin(req),cursoId=id(req.data?.cursoId);
+  // O que impede apagar é uso real, não histórico. Versão de teste que foi
+  // publicada e ninguém cursou não deixa rastro nenhum ao sair.
+  // A conferência fica fora da transação de propósito: emitirCertificado exige
+  // curso publicado, e curso publicado já é recusado abaixo, então não há corrida.
+  const [certs,atual]=await Promise.all([
+    db.collection('certificados').where('cursoId','==',cursoId).limit(1).get(),
+    db.doc(`cursos/${cursoId}`).get()]);
+  if(!atual.exists)return {ok:true};
+  if(atual.data().status==='publicado')fail('Curso publicado não pode ser excluído. Tire do ar primeiro: volte para rascunho ou arquive.');
+  if(!certs.empty)fail('Este curso já emitiu certificado e não pode ser apagado, porque o registro do professor aponta para ele. Use Arquivar: sai do catálogo e da lista, e os certificados seguem válidos.');
   return db.runTransaction(async tx=>{
     const ref=db.doc(`cursos/${cursoId}`),s=await tx.get(ref);if(!s.exists)return {ok:true};
-    const c=s.data();if(c.status==='publicado'||c.publicadoEm||c.historicoPublicado)fail('Curso com histórico de publicação não pode ser excluído.');
     const subs=await Promise.all(['modulos','aulas','questoes','gabarito'].map(n=>tx.get(ref.collection(n))));
     if(subs.reduce((n,s)=>n+s.size,0)>440)fail('Solicite a exclusão à equipe técnica.');
     for(const s of subs)for(const d of s.docs)tx.delete(d.ref);tx.delete(ref);audit(tx,uid,'excluirCurso',{cursoId});return {ok:true};
