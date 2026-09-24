@@ -407,6 +407,28 @@ function limparHtml(bruto, apenasLinha = false){
     });
   };
   visitar(molde);
+
+  // Conserta estrutura impossível antes de devolver.
+  // Uma <figure> só existe para carregar imagem. Sem <img> dentro, ela é resto
+  // de uma inserção desfeita, e o <figcaption> que sobra acaba engolindo o
+  // conteúdo inteiro da aula: tudo passa a sair centralizado e em itálico por
+  // causa do CSS da legenda, e nenhum botão da barra desfaz isso, porque não
+  // é negrito nem itálico, é o lugar errado na árvore.
+  const desmontar = el => {
+    const conteudo = document.createDocumentFragment();
+    while (el.firstChild) conteudo.appendChild(el.firstChild);
+    el.replaceWith(conteudo);
+  };
+  const BLOCOS_DENTRO = "p,h2,h3,ul,ol,li,blockquote,figure,figcaption";
+  for (let volta = 0; volta < 5; volta++){
+    const figuras = [...molde.querySelectorAll("figure")].filter(f => !f.querySelector("img"));
+    const legendas = [...molde.querySelectorAll("figcaption")]
+      .filter(c => c.querySelector(BLOCOS_DENTRO) || !c.closest("figure"));
+    if (!figuras.length && !legendas.length) break;
+    figuras.forEach(desmontar);
+    legendas.forEach(desmontar);
+  }
+
   return molde.innerHTML.trim();
 }
 
