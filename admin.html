@@ -516,6 +516,20 @@ function blocoDoCursor(area){
   return (no && no !== area) ? no : null;
 }
 
+// Alinhamento e espaçamento valem para tudo que está selecionado. Antes isto
+// pegava só o bloco onde o cursor começava: quem selecionava dez parágrafos e
+// clicava em Justificar via um parágrafo mudar e nove continuarem como estavam.
+function blocosDaSelecao(area){
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return [];
+  const faixa = sel.getRangeAt(0);
+  const tocados = [...area.querySelectorAll("p,h2,h3,li,blockquote")]
+    .filter(b => { try { return faixa.intersectsNode(b); } catch { return false; } });
+  if (tocados.length) return tocados;
+  const um = blocoDoCursor(area);
+  return um ? [um] : [];
+}
+
 function ligarEditor(id){
   const area = document.getElementById(id);
   if (!area) return;
@@ -643,13 +657,15 @@ function ligarEditor(id){
       if (d.bloco) document.execCommand("formatBlock", false, d.bloco);
 
       if (d.classe){
-        const bloco = blocoDoCursor(area);
-        if (bloco){
-          const grupo = CLASSES_OK.filter(c => c.startsWith(d.grupo + "-"));
-          const jaTinha = bloco.classList.contains(d.classe);
-          grupo.forEach(c => bloco.classList.remove(c));
-          if (!jaTinha) bloco.classList.add(d.classe);
-        }
+        const blocos = blocosDaSelecao(area);
+        const grupo = CLASSES_OK.filter(c => c.startsWith(d.grupo + "-"));
+        // Só desliga quando TODOS já estavam com a classe. Numa seleção mista,
+        // o clique uniformiza, que é o que a pessoa espera ao clicar uma vez.
+        const todosTinham = blocos.length && blocos.every(b => b.classList.contains(d.classe));
+        blocos.forEach(b => {
+          grupo.forEach(c => b.classList.remove(c));
+          if (!todosTinham) b.classList.add(d.classe);
+        });
       }
 
       if (d.link){
@@ -665,8 +681,7 @@ function ligarEditor(id){
 
       if (d.limpar){
         document.execCommand("removeFormat", false, null);
-        const bloco = blocoDoCursor(area);
-        if (bloco) CLASSES_OK.forEach(c => bloco.classList.remove(c));
+        blocosDaSelecao(area).forEach(b => CLASSES_OK.forEach(c => b.classList.remove(c)));
       }
       contador();
     });
